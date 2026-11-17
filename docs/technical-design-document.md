@@ -58,7 +58,7 @@ Values marked *(default)* are starting points for tuning during playtests.
 | ID | Requirement |
 |---|---|
 | FR-1 | A session contains three rounds, one for each scenario, in random order. Each scenario appears exactly once. |
-| FR-2 | Each round has a briefing, an active incident phase with a 12-minute timer *(default)*, and a debrief. |
+| FR-2 | Each round has a briefing, an active incident phase with a 12-minute timer *(default)*, and a debrief. Practice mode replaces the countdown with elapsed time (D-02). |
 | FR-3 | The simulation models `api`, `jobs`, `worker`, and `ledger`, driven by a traffic generator producing steady, believable load. |
 | FR-4 | The dashboard shows latency, error rate, throughput, queue depth, and connection-pool usage for each service, wherever the metric applies (§9). |
 | FR-5 | One paging alert starts the round timer. Alert text describes the symptom, never the cause. |
@@ -271,7 +271,7 @@ sequenceDiagram
 
 ### 4.1 Host prerequisites (assumption)
 
-- Docker Engine **28.0** or later, with the Compose plugin v2.20 or later (for `--wait`) and buildx, running on this computer. Supported hosts: Linux and macOS with Colima (tier 1), plus Docker Desktop on macOS or Windows (WSL2) and Docker Engine inside WSL2 (best effort). Podman and remote engines are refused. *(Updated per D-01.)*
+- Docker Engine **28.0** or later, with the Compose plugin v2.20 or later (for `--wait`) and buildx, running on this computer. Tier-1 (verified) hosts: Linux with Docker Engine, and macOS with Colima. Untested: Docker Desktop on macOS or Windows, and Docker Engine inside WSL2; preflight warns, and they run only if every isolation check passes. Podman and remote engines are refused. *(Updated per D-01.)*
 - GNU Make, 8 GB of RAM, 2 GB of free disk, and port 8080 free on 127.0.0.1. Port 8080 can be changed with `ESCAPE_PORT`.
 - The first build pulls pinned base images and dependencies. After that, the game runs offline (NFR-1). `make build` prepares a machine in advance so the game can then be played offline.
 
@@ -428,10 +428,13 @@ stateDiagram-v2
   PAUSED --> ACTIVE: resume
   ACTIVE --> RESOLVED: declaration accepted
   ACTIVE --> TIMED_OUT: timer reaches 0
+  ACTIVE --> ENDED: end round (practice mode only)
+  PAUSED --> ENDED: end round (practice mode only)
   ACTIVE --> ABORTED: restart round, game failure
   PAUSED --> ABORTED: restart round, game failure
   RESOLVED --> DEBRIEF
   TIMED_OUT --> DEBRIEF
+  ENDED --> DEBRIEF
   DEBRIEF --> [*]
   ABORTED --> [*]
 ```
@@ -443,7 +446,8 @@ stateDiagram-v2
 | `ACTIVE` | Runs at real time (1 simulated second per wall-clock second) | counts down from 12:00 | Investigate, run actions, pause, declare resolved, restart the round |
 | `PAUSED` | Frozen. Pending action delays are frozen too. | frozen | Resume or restart. The dashboard is blurred while paused, so pausing is a break, not free thinking time. |
 | `RESOLVED` | Stopped | stopped | Nothing; the debrief opens |
-| `TIMED_OUT` | Stopped | 0:00 | Nothing; the debrief opens |
+| `TIMED_OUT` | Stopped | 0:00 | Nothing; the debrief opens. Never reached in practice mode. |
+| `ENDED` | Stopped | stopped | Practice mode only (D-02): the player clicked **End round**. Nothing; the debrief opens |
 | `ABORTED` | Stopped | stopped | Restart the round. The aborted attempt is not scored. |
 | `DEBRIEF` | None | none | Review the debrief; go to the next round |
 
@@ -668,7 +672,7 @@ A test pins each bold cell as part of that scenario's signature (T-DIAG). In eve
 ### 8.1 Engine
 
 - **Fixed-step loop.** Δt = 100 ms. Requests are discrete objects that carry `start_time`, `attempt`, `caller`, and `kind`. A discrete model keeps p95 latency and timeouts exact, and about 200 requests/s at peak is cheap to process.
-- **Randomness.** One `random.Random(seed)` instance per round, split into named substreams (`traffic`, `latency`, `fault`, `feed`). Adding a new random draw in one area therefore does not shift the others.
+- **Randomness.** Each round's seed is split into named substreams, each its own `random.Random` seeded with `int.from_bytes(sha256(f"{seed}:{name}").digest()[:8])` (never Python's salted `hash()`). `sim` owns `traffic`, `latency`, and `fault`; the controller derives its own `feed` stream the same way (D-18). Adding a new random draw in one area therefore does not shift the others.
 - **Pacing.** In play mode, the engine runs 10 steps per wall-clock second. In pre-roll, and at any time in test mode, it steps only on the controller's `cmd.step` command, as fast as possible (D-05).
 
 ### 8.2 Traffic generator
@@ -774,6 +778,8 @@ Each service row starts with a **status chip**: `Up`, `Restarting`, or `Crash-lo
 | `ledger` retry share | < 25% of throughput |
 | `jobs` backlog | depth < 100, not increasing over 30 s |
 
+"Not increasing" means the least-squares slope of `jobs` depth over the trailing 30 one-second samples is ≤ +0.5 messages/s *(default)*; with fewer than 30 samples since T0, the available samples are used, with a minimum of 10 (D-07).
+
 These checks are the same in every scenario. They are shown as "passing / failing" with icon and text. There is no countdown (§6.4).
 
 ### 9.4 Additional evidence panels
@@ -810,6 +816,7 @@ These checks are the same in every scenario. They are shown as "passing / failin
 ### 9.8 Customer-impact feed
 
 - **Inputs.** Bad-event counts by category for each simulated second (§8.4).
+- **Pre-roll (D-09).** The feed and counters run throughout pre-roll in simulation time. Items before T0 are flagged `pre_alert` and shown as history under a "Before the alert" divider, without screen-reader announcements. Scored impact (B) still starts at T0.
 - **Counters**, all computed directly from those counts:
   - "Customers affected, last 5 min": bad events in the last 5 minutes, capped at the simulated active-customer count (2,500 *(default)*).
   - "Open support tickets": opened at 1 per 40 bad events; closed at 1 per 10 s once all categories have been at zero for 30 s.
@@ -834,7 +841,7 @@ These checks are the same in every scenario. They are shown as "passing / failin
    - Center: the metric grid.
    - Right: impact counters and feed.
    - Bottom drawer: Actions, Recent changes, Config, Action log.
-4. **Action confirmation.** Target (`sim/ledger`), cost, delay, side effects, and remaining budget after the action. Required for actions costing 3 or more; optional otherwise, with a setting for "Confirm all actions."
+4. **Action confirmation.** Target (`sim/ledger`), cost, delay, side effects, and remaining budget after the action. Required for actions costing 3 or more; optional otherwise, with a setting for "Confirm all actions" (stored per browser in `localStorage`, default off, never sent to the server; D-14).
 5. **Debrief.** See §11.5.
 6. **Session summary.** Three rounds with outcome, score, root cause, and the next learning tip for each.
 
@@ -919,7 +926,7 @@ Restarting everything still restores service in all three scenarios, so a player
 |---|---|
 | T_onset | Simulation time at which the fault began (hidden until the debrief) |
 | T0 | Simulation time at which the paging alert fired; the round timer starts here |
-| **Time to detect (TTD)** | T0 − T_onset. This measures the *alerting*, not the player. Shown with "first visible signal": the first second at which the scenario's leading signal left its baseline band. That teaches observability design, for example "pool usage was visibly climbing 3 minutes before the alert." Not scored. |
+| **Time to detect (TTD)** | T0 − T_onset. This measures the *alerting*, not the player. Shown with "first visible signal": the first second at which the scenario's leading signal left its baseline band. That teaches observability design, for example "pool usage was visibly climbing 3 minutes before the alert." The band and run-length rule are defined in D-08. Not scored. |
 | **Time to recover (TTR)** | `healthy_since` − T0, for the healthy period that led to an accepted declaration (or that was stable at timeout). Undefined if not recovered. |
 | Stability window W | 60 s of all health checks passing continuously (§6.4) |
 | B (customer impact) | Weighted sum of bad events (§8.4) from T0 to round end. Pre-alert impact is shown but not scored; the player couldn't act before the alert. |
@@ -957,6 +964,8 @@ Score = clamp( S_speed + S_impact + S_hold + S_budget − P_breadth − P_noeffe
 | `recovered_undeclared` | Stable for ≥ W at timeout | All components except the +100 declaration points |
 | `not_recovered` | Unstable at timeout | S_impact minus penalties only, usually close to 0 |
 | `aborted` | Restart, or a game failure | Not scored |
+
+**Practice mode (D-02).** There is no timeout. **End round** (`ENDED`) yields `recovered_undeclared` if the system has been stable for ≥ W, otherwise `not_recovered`. S_speed is reported as "not scored", so the maximum is 700. Every other component and penalty is unchanged.
 
 ### 11.4 Worked examples (illustrative)
 
@@ -1002,8 +1011,8 @@ These examples use the default parameters, with the player acting at 60 s after 
 
 | Entity | Key fields | Lifetime |
 |---|---|---|
-| `Session` | `id`, `created_at`, `round_order[]` (scenario ids), `rounds[]` (round ids), `current_index` | Controller memory, mirrored to `/data/session.json` |
-| `Round` | `id`, `session_id`, `scenario_id`, `seed`, `attempt`, `state`, `t_onset_ms`, `t0_ms`, `time_limit_s`, `budget_total`, `budget_remaining`, `healthy_since_ms`, `outcome`, `abort_reason` | In memory while live. A summary is stored after it ends. |
+| `Session` | `id`, `created_at`, `mode` (`standard` / `practice`, D-02), `status` (`in_progress` / `complete` / `abandoned`, D-13), `round_order[]` (scenario ids), `rounds[]` (round ids), `current_index` | Controller memory, mirrored to `/data/session.json` |
+| `Round` | `id`, `session_id`, `scenario_id`, `seed`, `attempt`, `state`, `t_onset_ms`, `t0_ms`, `time_limit_s`, `budget_total`, `budget_remaining`, `healthy_since_ms`, `outcome`, `abort_reason`, wall-clock phase times (`briefing_opened_at`, `on_call_at`, `debrief_opened_at`, `debrief_closed_at`, paused seconds; D-12) | In memory while live. A summary is stored after it ends. |
 | `ScenarioDefinition` | `id`, `title`, `parameters`, `fault_script`, `signature`, `effect_matrix`, `debrief_copy` | Static YAML built into the images |
 | `MetricSample` | `t_ms`, `service`, `metric`, `labels{}`, `value` | Memory ring buffer (15 min); never persisted |
 | `HealthCheckStatus` | `id`, `passing`, `value`, `threshold` | Memory |
@@ -1020,23 +1029,25 @@ No user, account, or player-name entity exists, because none is needed.
 | Method and path | Purpose |
 |---|---|
 | `GET /api/health/live`, `GET /api/health/ready` | Liveness; readiness plus isolation status and link to `sim` |
-| `POST /api/sessions` | Create a new session. Replaces any existing one, which is marked abandoned. |
-| `GET /api/sessions/current` | Session summary and current round |
-| `POST /api/sessions/current/rounds` | Prepare the next round (`PREPARING` → `BRIEFING`) |
+| `POST /api/sessions` | Create a new session, `{mode: "standard" \| "practice"}` (default `standard`, D-02). Replaces any existing one, which is marked abandoned. |
+| `GET /api/sessions/current` | Session summary, mode, status, and current round |
+| `POST /api/sessions/current/rounds` | Prepare the next round (`PREPARING` → `BRIEFING`). `409 session_complete` once all three rounds are done (D-13). |
+| `POST /api/sessions/current/complete` | Mark the session `complete`; idempotent. Called when the session summary opens (D-13). |
 | `GET /api/rounds/{id}` | Round snapshot: state, timer, budget, checks, alerts, statuses |
 | `GET /api/rounds/{id}/metrics?since_ms=` | Metric history (player-visible series only) |
 | `POST /api/rounds/{id}/start` · `/pause` · `/resume` · `/restart` | Lifecycle |
+| `POST /api/rounds/{id}/end` | Practice mode only: `ENDED` → `DEBRIEF`. `409 invalid_state` in standard mode (D-02). |
 | `GET /api/actions/catalog` | The action catalog with costs, delays, descriptions, and valid targets |
 | `POST /api/rounds/{id}/actions` | Submit an action |
 | `POST /api/rounds/{id}/declare-resolved` | Declare the incident resolved |
 | `GET /api/rounds/{id}/debrief` | Available only in `DEBRIEF` (otherwise `409 invalid_state`) |
 | `WS /api/rounds/{id}/stream` | Server → client messages: `snapshot` (1 Hz), `alert`, `impact_event`, `action_update`, `state_change`, `system_notice` |
-| `POST /api/test/clock/step`, seed override on round creation | **Test mode only** (`ESCAPE_TEST_MODE=1`); return 404 otherwise |
+| `POST /api/test/clock/step`, `POST /api/test/inject {kind: "ledger_slowdown", duration_s ∈ {10, 20}}` (D-10), seed override on round creation | **Test mode only** (`ESCAPE_TEST_MODE=1`); return 404 otherwise |
 
 **Controller ↔ `sim` messages (internal).**
 
-- Commands: `cmd.start_round {scenario_id, seed, preroll}`, `cmd.resume`, `cmd.pause`, `cmd.action {action_id, type, target, params}`, `cmd.stop`, `cmd.step {n}` (test only).
-- Events: `evt.tick`, `evt.action_applied`, `evt.heartbeat`, `evt.error`. (`evt.prealert_ready` was removed per D-05. `cmd.test_inject` was added for test mode per D-10.)
+- Commands: `cmd.start_round {scenario_id, seed}` (enters stepped pre-roll), `cmd.step {n}` (in player mode only during pre-roll; at any time in test mode; D-05), `cmd.resume`, `cmd.pause`, `cmd.action {action_id, type, target, params}`, `cmd.stop`, `cmd.test_inject {kind, duration_s}` (test mode only, D-10).
+- Events: `evt.tick`, `evt.action_applied`, `evt.heartbeat`, `evt.error`. (`evt.prealert_ready` was removed per D-05.) A disallowed command is answered with `evt.error` and has no effect.
 
 ### 12.3 Examples
 
@@ -1125,6 +1136,7 @@ Content-Type: application/json
 | 404 | `not_found` | Unknown round or session; any test endpoint outside test mode |
 | 409 | `invalid_state` | The action doesn't fit the current state (for example, an action during `BRIEFING`) |
 | 409 | `action_in_progress`, `no_change`, `insufficient_budget`, `target_unavailable`, `not_stable` | §6.5, §10.3 |
+| 409 | `session_complete` | All three rounds are done and another round was requested (D-13) |
 | 423 | `locked` | An isolation check failed (§5.6) |
 | 503 | `sim_unavailable` | The link to `sim` is down |
 
@@ -1162,7 +1174,7 @@ Each step removes more state, and none of them affects anything outside the proj
 
 - **Local only.** All data stays in containers on the player's machine. There is no telemetry, analytics, crash reporting, update check, or external font or CDN. The UI bundles all its assets, and its content security policy is `default-src 'self'; connect-src 'self'`.
 - **No real data.** All customers, orders, products, and cities are fictional and come from curated lists bundled with the game. Names are drawn from a fictional name list, and no feed item may reference a real company, person, or product. No personal data is collected; the game has no player names. Results store only scenario, seed, timings, actions, and scores.
-- **Feed content boundaries.** Templates are polite and mildly frustrated. They contain no profanity, threats, harassment, or references to protected characteristics. Each template is reviewed before release through the CI lint, a fresh-session AI review, and the developer's sign-off (D-03).7) and a profanity list.
+- **Feed content boundaries.** Templates are polite and mildly frustrated. They contain no profanity, threats, harassment, or references to protected characteristics. Each template is reviewed before release through the CI lint (the banned-word list in §9.7 and a profanity list), a fresh-session AI review, and the developer's sign-off (D-03).
 - **Dependencies and containers**
   - Base images are pinned by digest. Python dependencies are hash-pinned (`uv` lock or `pip-tools` with `--require-hashes`). npm uses `npm ci` with a committed lockfile.
   - Nothing is installed at runtime.
@@ -1200,7 +1212,9 @@ Each step removes more state, and none of them affects anything outside the proj
 - Pause freezes ticks and delays. Resume continues with the same results.
 - `sim` killed mid-round leads to abort, refund, and recovery after restart. Controller restart leads to the live round being aborted and completed rounds kept.
 
-### 15.4 End-to-end tests (Playwright against `make up`)
+### 15.4 End-to-end tests (Playwright)
+
+Per D-11, the full suite below runs on every commit against the real Compose stack in the `make test` profile (isolation on, manual clock, fixed seeds). A separate real-time smoke test plays one round against `make up` (player profile, no test controls) nightly and before each release.
 
 - A full session of three rounds with scripted targeted fixes, reaching the session summary.
 - Keyboard-only run-through. axe-core accessibility scan on every screen, with no serious or critical violations.
@@ -1213,7 +1227,7 @@ Each step removes more state, and none of them affects anything outside the proj
 | **T-DIAG** | Each scenario can be diagnosed, and the three are distinguishable | For 3 scenarios × 50 seeds, a rule-based classifier reads **only** the player-visible stream (the same JSON as the UI) at T0+60 s, applying the §7.2 signature rules. It must be 100% correct. A second check confirms that every signature cell in §7.2 holds for every seed. |
 | **T-SCORE** | The targeted fix beats `restart_all` | For 3 scenarios × 50 seeds × decision times {30, 60, 120, 240} s, the targeted policy's score must exceed `restart_all`'s at the same time in 100% of runs, with a median margin of 250 or more. A fairness case compares the targeted fix at 180 s with `restart_all` at 20 s. Also asserts that `restart_all` reaches `recovered` in every run (FR-8). |
 | **T-EFFECT** | The §10.2 matrix matches simulated behavior | Each action is applied to each scenario at T0+60 s. "Fix", "mitigates", and "restores" actions must reach healthy within 120 s. "No effect" actions must not. |
-| **T-STABLE** | Recovery must stay stable | (a) A declaration 10 s after the fix is rejected with `not_stable`. (b) Injecting a test-only relapse at 50 s into the healthy window resets `healthy_since`. (c) `restart_service(ledger)` in `retry_storm` never yields an accepted declaration. (d) `recycle_pool` alone in `pool_leak` reports `held = false`. |
+| **T-STABLE** | Recovery must stay stable | (a) A declaration 10 s after the fix is rejected with `not_stable`. (b) Injecting a test-only relapse (`ledger_slowdown`, D-10) at 50 s into the healthy window resets `healthy_since`. (c) `restart_service(ledger)` in `retry_storm` never yields an accepted declaration. (d) `recycle_pool` alone in `pool_leak` reports `held = false`. |
 | **T-FEED** | Impact tracks real errors | (1) Every feed item's evidence count is at least the minimum and matches the simulation's bad-event counts for that window. (2) Across baseline seconds with zero bad events, no complaint items appear. (3) Ticket and affected-customer counters equal their formulas over the bad-event series, exactly. (4) Correlation between bad events and feed items per minute is ≥ 0.8 across a round. (5) No recovery message while any category is non-zero. |
 | **T-SPOIL** | No hidden information leaks | No player-visible message before `DEBRIEF` contains `scenario_id`, `fault.*`, `effect_class`, or `held`. |
 
@@ -1225,7 +1239,7 @@ Each step removes more state, and none of them affects anything outside the proj
 | **T-DOWN** | Before `make up`, create sentinel resources: a container, network, and volume that are not labeled and are not part of the project. After `make down`, no resource with the project label or project name remains; the sentinels and the base images are unchanged; `./.escape/` is gone. Running `make down` a second time also exits 0 (OR-3). |
 | **T-ISO-1** (static) | Policy check over `docker compose config`: §5.5 static rules. Plus negative fixtures (a compose file with `network_mode: host`, `privileged`, a Docker socket mount, or a `0.0.0.0` port) that must each fail `make up` preflight. |
 | **T-ISO-2** (routing) | Inside `sim` and `controller`: no default route, `CapEff` is 0, non-root, no bind mounts; DNS for `isolation-check.invalid` fails. |
-| **T-ISO-3** (no external traffic) | Capture every packet on the `escape_internal` bridge (tcpdump) and the docker host's egress interface during a full scripted session of all three scenarios. Zero packets from `sim` or `controller` to addresses outside the internal subnet. Zero DNS queries for non-service names. The `sim` package passes the banned-API lint. |
+| **T-ISO-3** (no external traffic) | On an ephemeral Linux CI runner, with `tcpdump` running on the host outside the Compose project (D-17), capture every packet on the `escape_internal` bridge (tcpdump) and the docker host's egress interface during a full scripted session of all three scenarios. Zero packets from `sim` or `controller` to addresses outside the internal subnet. Zero DNS queries for non-service names. The `sim` package passes the banned-API lint. |
 | **T-ISO-4** | The nginx config has exactly one upstream (`controller:8000`) and no `resolver`. Actions with a target outside the enumeration, or fields containing a URL, host, or path, are rejected with 422. |
 | **T-ISO-5** (fail closed) | Start with a deliberately broken override (for example, the internal network without `internal: true`, or a fake `AWS_ACCESS_KEY_ID`). `make up` must exit non-zero and tear down. A periodic check failing mid-round must abort the round and lock the controller. |
 | **T-ISO-6** | Test-only endpoints return 404 in the player profile. |
@@ -1265,9 +1279,9 @@ Phase 0 comes first, so that every later phase is built inside the safety rails 
 | Players feel the scoring is unfair or opaque | Formula shown in the debrief with each component; T-SCORE invariants; fairness self-rating logged during self-play |
 | "Restart everything" is still tempting, because players are anchored on speed | Several independent penalty levers (§10.4); the briefing says plainly that restarts cost a lot |
 | The simulation feels fake to experienced engineers | Realistic mechanisms (§7), believable traffic variation, accurate p95 and timeout semantics; blind AI-proxy review of the dashboards (REL-04) |
-| Docker behaves differently across hosts (Docker Desktop, WSL2), especially internal networks and loopback binds | CI on Linux plus manual checks on macOS and Windows; isolation checks verify configuration at runtime, not just in the compose file |
+| Docker behaves differently across hosts (Docker Desktop, WSL2), especially internal networks and loopback binds | CI on Linux plus manual checks on the developer's Colima laptop; Docker Desktop and WSL2 are labeled untested (D-01); isolation checks verify configuration at runtime, not just in the compose file |
 | Hidden state leaks through the UI or network tab | Field stripping at the controller plus the T-SPOIL test |
-| Pressure from a time limit excludes some players | Pause is always available; a relaxed-timer option is raised as an open question (§17) |
+| Pressure from a time limit excludes some players | Pause is always available, plus an untimed practice mode (D-02) |
 | Scope creep (logs, more scenarios, Grafana) | MVP boundary (§1); stretch work is tracked separately |
 | Solo developer: no independent human review, and no new-player testing | CI gates for every automated proof (§15); fresh-session AI reviews of content, dashboards, and debriefs, saved in `reviews/`; re-reading copy on a different day; validation gaps stated openly in the sign-off and release notes (D-19) |
 
@@ -1300,7 +1314,7 @@ Phase 0 comes first, so that every later phase is built inside the safety rails 
 
 ## 18. Decision addendum (2026-11-17)
 
-These decisions resolve the open questions in §17 and the gaps found during ticket breakdown. **Where they conflict with earlier sections, they take precedence.** The full rationale and the affected tickets are in *Incident Escape Room: Implementation Stories and Tickets, v2*, §6.
+These decisions resolve the open questions in §17 and the gaps found during ticket breakdown. **Where they conflict with earlier sections, they take precedence.** The full rationale and the affected tickets are in *Incident Escape Room: Implementation Stories and Tickets, v3* (`docs/tickets.md`), §6.
 
 | ID | Decision | Sections affected |
 |---|---|---|
