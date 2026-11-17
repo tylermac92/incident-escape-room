@@ -3,7 +3,10 @@ name = "escape-sim"
 version = "0.1.0"
 description = "Incident Escape Room simulation engine (runs only inside the sandbox)."
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+    "escape-isolation",
+    "websockets>=17.4",
+]
 
 [dependency-groups]
 dev = ["pytest"]
@@ -14,3 +17,6 @@ build-backend = "uv_build"
 
 [tool.uv.build-backend]
 module-name = "sim"
+
+[tool.uv.sources]
+escape-isolation = { path = "../isolation" }

@@ -1,3 +1,5 @@
-"""Container entry point. The link server on port 9000 arrives with SIM-10."""
+import asyncio
 
-print("sim: link server not implemented yet (SIM-10)")
+from sim.server import main
+
+asyncio.run(main())
