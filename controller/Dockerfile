@@ -12,6 +12,8 @@ FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb
 LABEL com.incident-escape-room.managed="true"
 COPY --from=build /app/.venv /app/.venv
 COPY feed_templates /app/feed_templates
+# A new named volume copies this ownership, so the non-root controller can write /data.
+RUN install -d -o 10001 -g 10001 /data
 ENV PATH=/app/.venv/bin:$PATH PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 USER 10001:10001
 EXPOSE 8000
