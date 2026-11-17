@@ -1,5 +1,4 @@
 # Incident Escape Room: one disposable, labeled Compose project (TDD §4.3, §5.1).
-# Health checks, startup order, restart policies and resource limits arrive with ENV-04.
 name: incident-escape-room
 
 # Shared hardening for every service (SR-3, SR-4).
@@ -13,17 +12,41 @@ x-hardened: &hardened
 services:
   sim:
     <<: *hardened
-    build: ./sim
+    build:
+      context: ./sim
+      additional_contexts: { isolation: ./isolation }
     networks: [escape_internal]
     tmpfs: ["/tmp:size=16m"]
+    restart: on-failure:3
+    cpus: 0.5
+    mem_limit: 256m
+    # Healthy only once sim's own isolation self-check passes (TDD §4.5).
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/healthz', timeout=2)"]
+      interval: 5s
+      timeout: 2s
+      retries: 6
 
   controller:
     <<: *hardened
-    build: ./controller
+    build:
+      context: ./controller
+      additional_contexts: { isolation: ./isolation }
     networks: [escape_internal]
     tmpfs: ["/tmp:size=16m"]
     volumes:
       - escape_results:/data   # the only writable path
+    depends_on:
+      sim: { condition: service_healthy }
+    restart: on-failure:3
+    cpus: 0.5
+    mem_limit: 256m
+    # Ready only when isolation passes and the link to sim is up (TDD §4.5).
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health/ready', timeout=2)"]
+      interval: 5s
+      timeout: 2s
+      retries: 6
 
   # Accepted residual risk (TDD §5.1): ui sits on the bridge network escape_edge, so it
   # could in principle connect out. It is static nginx with one fixed upstream and no
@@ -36,6 +59,16 @@ services:
     tmpfs: ["/tmp:size=16m"]   # nginx pid file and temp/cache paths
     ports:
       - "127.0.0.1:${ESCAPE_PORT:-8080}:8080"
+    depends_on:
+      controller: { condition: service_healthy }
+    restart: unless-stopped
+    cpus: 0.25
+    mem_limit: 64m
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 5s
+      timeout: 2s
+      retries: 6
 
 networks:
   escape_internal:

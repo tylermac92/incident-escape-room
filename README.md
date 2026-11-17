@@ -6,7 +6,7 @@ Everything in this game is a simulation of a made-up store, running on your own 
 
 ## Status
 
-Scaffolding only (ticket ENV-01). The design is in [`docs/technical-design-document.md`](docs/technical-design-document.md) and the work plan in [`docs/tickets.md`](docs/tickets.md).
+Phase 0 (safety rails) in progress: no gameplay yet. The design is in [`docs/technical-design-document.md`](docs/technical-design-document.md) and the work plan in [`docs/tickets.md`](docs/tickets.md).
 
 ## Layout
 
@@ -14,7 +14,9 @@ Scaffolding only (ticket ENV-01). The design is in [`docs/technical-design-docum
 |---|---|
 | `sim/` | Simulation engine (Python 3.12, uv). Must never import `controller`. |
 | `controller/` | Game controller (Python 3.12, FastAPI, uv). |
+| `isolation/` | Runtime isolation self-check, used by both `sim` and `controller` (standard library only). |
 | `ui/` | Player UI (React + TypeScript, Vite). All copy lives in `ui/src/strings/en.json`. |
+| `compose.yaml` | The disposable Compose project: networks, hardening, health checks, startup order. |
 
 ## Building
 

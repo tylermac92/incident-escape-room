@@ -1,0 +1,69 @@
+"""CTL-01 readiness and error envelope, plus the link's internal-subnet check (CTL-02)."""
+
+import time
+
+import pytest
+from fastapi.testclient import TestClient
+
+from controller import app as app_module
+from controller.link import is_internal
+
+ROUTES = (
+    "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n"
+    "eth0\t000012AC\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0\n"   # 172.18.0.0/16, on-link
+    "eth0\t0000000A\t010012AC\t0003\t0\t0\t0\t000000FF\t0\t0\t0\n"   # 10.0.0.0/8 via gateway
+)
+PASS = {"status": "pass", "failed": []}
+
+
+@pytest.fixture
+def client():
+    # No `with`: the lifespan (real checks, real link) does not run in unit tests.
+    app_module.state["isolation"] = {"status": "fail", "failed": ["not_run"]}
+    app_module.link.last_heartbeat, app_module.link.address_ok = None, True
+    return TestClient(app_module.app)
+
+
+def error(response):
+    return response.status_code, response.json()["error"]["code"]
+
+
+def test_live(client):
+    assert client.get("/api/health/live").json() == {"status": "live"}
+
+
+def test_ready_fails_closed_before_first_check(client):
+    assert error(client.get("/api/health/ready")) == (503, "locked")
+
+
+def test_ready_needs_the_sim_link(client):
+    app_module.state["isolation"] = PASS
+    assert error(client.get("/api/health/ready")) == (503, "sim_unavailable")
+    app_module.link.last_heartbeat = time.monotonic()
+    assert client.get("/api/health/ready").status_code == 200
+    app_module.link.last_heartbeat = time.monotonic() - 4  # heartbeat older than 3 s
+    assert error(client.get("/api/health/ready")) == (503, "sim_unavailable")
+
+
+def test_ready_names_failed_checks(client):
+    app_module.state["isolation"] = {"status": "fail", "failed": ["route", "dns"]}
+    body = client.get("/api/health/ready").json()["error"]
+    assert body["details"]["failed_checks"] == ["route", "dns"]
+
+
+def test_sim_outside_subnet_locks(client):
+    app_module.state["isolation"] = PASS
+    app_module.link.last_heartbeat = time.monotonic()
+    app_module.link.address_ok = False
+    body = client.get("/api/health/ready").json()["error"]
+    assert body["code"] == "locked" and body["details"]["failed_checks"] == ["sim_address"]
+
+
+def test_unknown_path_uses_envelope(client):
+    assert error(client.get("/nope")) == (404, "not_found")
+
+
+def test_is_internal():
+    assert is_internal("172.18.0.3", ROUTES)
+    assert not is_internal("10.1.2.3", ROUTES)   # reachable only through a gateway
+    assert not is_internal("8.8.8.8", ROUTES)
