@@ -16,6 +16,7 @@ Phase 0 (safety rails) in progress: no gameplay yet. The design is in [`docs/tec
 | `controller/` | Game controller (Python 3.12, FastAPI, uv). |
 | `isolation/` | Runtime isolation self-check, used by both `sim` and `controller` (standard library only). |
 | `ui/` | Player UI (React + TypeScript, Vite). All copy lives in `ui/src/strings/en.json`. |
+| `ui/nginx/` | The edge config: serves the UI, proxies `/api` only to `controller:8000`. `check.sh` enforces that policy. |
 | `compose.yaml` | The disposable Compose project: networks, hardening, health checks, startup order. |
 
 ## Building
@@ -42,4 +43,4 @@ cd controller && uv sync --locked && uv build
 cd ui && npm ci && npm run build
 ```
 
-Run the tests with `make test`.
+Run the tests with `make test`. It also checks the nginx proxy policy.
