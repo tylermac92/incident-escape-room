@@ -1,9 +1,9 @@
 # Incident Escape Room. Every target is scoped to this project only (TDD §4.7).
 .PHONY: build test up down status logs dev
 
-# Image names match Compose's default <project>-<service>, so `down --rmi local` removes them (ENV-03).
+# Compose names images <project>-<service>, so `down --rmi local` removes them (ENV-10).
 build:
-	for s in sim controller ui; do docker build -t incident-escape-room-$$s $$s || exit 1; done
+	docker compose build
 
 test:
 	cd sim && uv run --locked pytest -q

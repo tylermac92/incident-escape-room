@@ -1,0 +1,50 @@
+# Incident Escape Room: one disposable, labeled Compose project (TDD §4.3, §5.1).
+# Health checks, startup order, restart policies and resource limits arrive with ENV-04.
+name: incident-escape-room
+
+# Shared hardening for every service (SR-3, SR-4).
+x-hardened: &hardened
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  labels:
+    com.incident-escape-room.managed: "true"
+
+services:
+  sim:
+    <<: *hardened
+    build: ./sim
+    networks: [escape_internal]
+    tmpfs: ["/tmp:size=16m"]
+
+  controller:
+    <<: *hardened
+    build: ./controller
+    networks: [escape_internal]
+    tmpfs: ["/tmp:size=16m"]
+    volumes:
+      - escape_results:/data   # the only writable path
+
+  # Accepted residual risk (TDD §5.1): ui sits on the bridge network escape_edge, so it
+  # could in principle connect out. It is static nginx with one fixed upstream and no
+  # code that initiates connections. It must be there because an internal network
+  # cannot publish ports to the host.
+  ui:
+    <<: *hardened
+    build: ./ui
+    networks: [escape_edge, escape_internal]
+    tmpfs: ["/tmp:size=16m"]   # nginx pid file and temp/cache paths
+    ports:
+      - "127.0.0.1:${ESCAPE_PORT:-8080}:8080"
+
+networks:
+  escape_internal:
+    internal: true
+    labels: { com.incident-escape-room.managed: "true" }
+  escape_edge:
+    driver: bridge
+    labels: { com.incident-escape-room.managed: "true" }
+
+volumes:
+  escape_results:
+    labels: { com.incident-escape-room.managed: "true" }
