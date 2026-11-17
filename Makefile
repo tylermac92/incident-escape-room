@@ -1,11 +1,9 @@
 # Incident Escape Room. Every target is scoped to this project only (TDD §4.7).
 .PHONY: build test up down status logs dev
 
-# shortcut: builds packages locally; ENV-02 switches this to building container images.
+# Image names match Compose's default <project>-<service>, so `down --rmi local` removes them (ENV-03).
 build:
-	cd sim && uv sync --locked && uv build
-	cd controller && uv sync --locked && uv build
-	cd ui && npm ci && npm run build
+	for s in sim controller ui; do docker build -t incident-escape-room-$$s $$s || exit 1; done
 
 test:
 	cd sim && uv run --locked pytest -q

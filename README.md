@@ -16,15 +16,17 @@ Scaffolding only (ticket ENV-01). The design is in [`docs/technical-design-docum
 | `controller/` | Game controller (Python 3.12, FastAPI, uv). |
 | `ui/` | Player UI (React + TypeScript, Vite). All copy lives in `ui/src/strings/en.json`. |
 
-## Building locally
+## Building
 
-Requires [uv](https://docs.astral.sh/uv/) and Node.js 22 with npm. Only the first build needs network access, to fetch the locked dependencies.
+`make build` builds the three container images (`incident-escape-room-sim`, `-controller`, `-ui`) with Docker. Only this step needs network access, to fetch the pinned base images and locked dependencies; the built images install nothing when they start.
 
 ```bash
 make build
 ```
 
-Or one package at a time:
+## Building packages without Docker
+
+For working on one package, with [uv](https://docs.astral.sh/uv/) and Node.js 22 with npm:
 
 ```bash
 cd sim && uv sync --locked && uv build
