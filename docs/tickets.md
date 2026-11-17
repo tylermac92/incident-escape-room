@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Source TDD** | *Incident Escape Room: Technical Design Document*, file `incident-escape-room-tdd.md` (status: draft for estimation and implementation kickoff) |
+| **Source TDD** | *Incident Escape Room: Technical Design Document*, file `docs/technical-design-document.md` (status: draft for estimation and implementation kickoff) |
 | **Scope of source** | First playable version (MVP). Stretch goals are out of scope. |
 | **Revision** | v3: solo project (D-19). One person develops, tests, reviews, and approves everything. Builds on v2's decisions D-01 to D-18, including the Colima requirement. |
 | **Reference convention** | `§n.n` = TDD section. `FR-`, `NFR-`, `SR-`, `AR-`, `OR-`, `SC-` = TDD requirement IDs. `T-*` = TDD test IDs (§15). |
@@ -92,6 +92,7 @@
 **Dependencies:** ENV-01
 
 **TDD traceability:** §4.3, §4.6, SR-3, SR-4, §14 (no runtime installs, non-root); decision D-01
+
 ---
 
 #### ENV-03 · Compose topology, networks, and container security settings
@@ -179,6 +180,7 @@
 **Dependencies:** ENV-03
 
 **TDD traceability:** §5.5 (static checks 1–5), §4.2, SR-1–SR-5, SR-8, SR-9; decision D-06
+
 ---
 
 #### ENV-07 · Runtime isolation self-check library (`sim` and `controller`)
@@ -241,6 +243,7 @@
 **Dependencies:** ENV-04, ENV-06, ENV-08, ENV-10, ENV-13, CTL-20
 
 **TDD traceability:** §4.7, §5.6, §13 (partial startup), OR-1, OR-3, SR-9, NFR-4, SC-5; decision D-01
+
 ---
 
 #### ENV-10 · `make down` with project-scoped teardown and `FORCE=1`
@@ -339,6 +342,7 @@
 **Dependencies:** CTL-17, ENV-11
 
 **TDD traceability:** §4.6, §14 (local only, no personal data), §15.7; decision D-04
+
 ---
 
 ### E2: Simulation engine (`SIM`)
@@ -368,6 +372,7 @@
 **Dependencies:** ENV-01
 
 **TDD traceability:** §6.2, §6.3, §8.1, NFR-5; decision D-05 (replaces the 30× pre-roll pacing)
+
 ---
 
 #### SIM-02 · Seeded random-number streams
@@ -386,6 +391,7 @@
 **Dependencies:** SIM-01
 
 **TDD traceability:** §8.1, §8.6, NFR-5; decision D-18
+
 ---
 
 #### SIM-03 · Traffic generator
@@ -549,6 +555,7 @@
 **Dependencies:** SIM-01, SIM-09, ENV-07
 
 **TDD traceability:** §3.2, §3.3, §4.5, §12.2 (internal messages), SR-6; decisions D-05, D-10
+
 ---
 
 ### E3: Scenarios, world data, and action effects (`SCN`)
@@ -758,6 +765,7 @@
 **Dependencies:** ENV-01, ENV-07
 
 **TDD traceability:** §4.5, §12.2, §12.4, §5.5; decision D-13
+
 ---
 
 #### CTL-02 · Controller ↔ `sim` link client
@@ -797,6 +805,7 @@
 **Dependencies:** CTL-01, CTL-17
 
 **TDD traceability:** §12.1 (Session), §12.2, §4.6, FR-1, FR-11; decisions D-02, D-12, D-13
+
 ---
 
 #### CTL-04 · Round state machine and lifecycle endpoints
@@ -821,6 +830,7 @@
 **Dependencies:** CTL-02, CTL-03, CTL-07
 
 **TDD traceability:** §6.1, §6.5, §12.2, FR-2, FR-11, §5.6; decisions D-02, D-05
+
 ---
 
 #### CTL-05 · Round preparation and pre-roll handshake (controller-stepped)
@@ -841,6 +851,7 @@
 **Dependencies:** CTL-02, CTL-04, CTL-08, CTL-09, CTL-10, CTL-11, SIM-01, SIM-10
 
 **TDD traceability:** §3.3, §3.5, §6.1, §6.2, §8.1, §9.6; decision D-05
+
 ---
 
 #### CTL-06 · Round timer, stability tracking, and outcomes
@@ -918,6 +929,7 @@
 **Dependencies:** CTL-02
 
 **TDD traceability:** §9.3, §7.3–§7.5 (recovery verification), FR-9; decision D-07
+
 ---
 
 #### CTL-09 · Alert rules and page selection
@@ -981,6 +993,7 @@
 **Dependencies:** CTL-10, CTL-08, SEC-05, SEC-06
 
 **TDD traceability:** §9.8, §8.1, FR-6, NFR-5, §14 (feed content); decisions D-09, D-18
+
 ---
 
 #### CTL-12 · Action catalog endpoint and validation, budget, and idempotency
@@ -1093,6 +1106,7 @@
 **Dependencies:** CTL-15, CTL-07, SCN-04, SCN-05, SCN-06
 
 **TDD traceability:** §11.1, §11.5, §12.3 (debrief example), FR-10; decisions D-02, D-08
+
 ---
 
 #### CTL-17 · Results and session persistence
@@ -1118,6 +1132,7 @@
 **Dependencies:** CTL-01, ENV-03
 
 **TDD traceability:** §4.6, §12.1 (lifetimes), §13 (results volume), §14 (no personal data), §15.7, §16.3; decisions D-02, D-12
+
 ---
 
 #### CTL-18 · Player-visible snapshot, stream, and metric history
@@ -1156,6 +1171,7 @@
 **Dependencies:** CTL-04, ENV-11, SIM-10
 
 **TDD traceability:** §5.3, §12.2, §15.1, §15.5 (T-STABLE b); decision D-10
+
 ---
 
 #### CTL-20 · Controller resilience and fail-closed handling
@@ -1175,7 +1191,6 @@
 
 **TDD traceability:** §5.6, §6.5, §13, SR-9
 
-
 ---
 
 #### CTL-21 · Practice mode (untimed) rules
@@ -1194,6 +1209,7 @@
 **Dependencies:** CTL-03, CTL-04, CTL-06, CTL-15, CTL-17
 
 **TDD traceability:** §2.4 (AR-1 to AR-4), §6.1, §11.2, §16.2 (time-pressure risk), §17 Q2; decision D-02
+
 ---
 
 ### E5: Player UI (`UI`)
@@ -1309,6 +1325,7 @@
 **Dependencies:** UI-04, CTL-18
 
 **TDD traceability:** §9.1, §9.2, §9.5, §9.10, FR-4, AR-2; decision D-15
+
 ---
 
 #### UI-07 · Chart alternatives: table view and text summaries
@@ -1360,6 +1377,7 @@
 **Dependencies:** UI-04, CTL-10, CTL-11
 
 **TDD traceability:** §9.8, §9.10, FR-6, AR-3; decision D-09
+
 ---
 
 #### UI-10 · Actions drawer, confirmation dialog, and action log
@@ -1380,6 +1398,7 @@
 **Dependencies:** UI-04, CTL-12, CTL-13
 
 **TDD traceability:** §9.9 (screen 4), §10.1, §10.3, §5.4, §12.3, FR-7, SR-7, SR-10; decision D-14
+
 ---
 
 #### UI-11 · Pause, restart round, and reset session controls
@@ -1456,6 +1475,7 @@
 **Dependencies:** UI-13, CTL-03
 
 **TDD traceability:** §9.9 (screen 6), FR-1; decisions D-02, D-13
+
 ---
 
 #### UI-15 · System notices and game-failure states
@@ -1516,7 +1536,6 @@
 
 **TDD traceability:** §2.4 (AR-1 to AR-4), §9.10
 
-
 ---
 
 #### UI-18 · Practice mode UI
@@ -1537,6 +1556,7 @@
 **Dependencies:** UI-02, UI-04, UI-13, UI-14, CTL-21
 
 **TDD traceability:** §2.4, §9.9, §9.10; decision D-02
+
 ---
 
 ### E6: Security, privacy, and content (`SEC`)
@@ -1626,6 +1646,7 @@
 **Dependencies:** ENV-01
 
 **TDD traceability:** §14 (no real data), §9.8; decision D-03
+
 ---
 
 #### SEC-06 · Player-facing copy, feed templates, and content lint
@@ -1656,6 +1677,7 @@
 **Dependencies:** ENV-01
 
 **TDD traceability:** §5.4, §9.7, §9.8, §11.5, §14 (feed content boundaries), SR-10, §17 Q3; decision D-03
+
 ---
 
 #### SEC-07 · README and safety-first documentation
@@ -1679,6 +1701,7 @@
 **Dependencies:** ENV-09, ENV-10, ENV-11, ENV-13, ENV-14
 
 **TDD traceability:** §5.4, §4.1, §4.2, §4.7, §13, SR-10; decisions D-01, D-02, D-04, D-06
+
 ---
 
 ### E7: Test automation and verification (`QA`)
@@ -1769,6 +1792,7 @@
 **Dependencies:** QA-01, CTL-14, CTL-19
 
 **TDD traceability:** §15.5 (T-STABLE), §6.4; decision D-10
+
 ---
 
 #### QA-06 · T-FEED: impact tracks real errors
@@ -1842,6 +1866,7 @@
 **Dependencies:** UI-17, UI-18, ENV-09, CTL-19
 
 **TDD traceability:** §15.4, NFR-6, AR-1–AR-4, SR-10, §14; decisions D-02, D-11
+
 ---
 
 #### QA-10 · T-UP and T-DOWN: environment lifecycle and scoping
@@ -1916,6 +1941,7 @@
 **Dependencies:** ENV-09, QA-01, SEC-02, QA-18
 
 **TDD traceability:** §15.6 (T-ISO-3), SR-2, SR-6; decision D-17
+
 ---
 
 #### QA-14 · T-ISO-4: single upstream and target confinement
@@ -1984,6 +2010,7 @@
 **Dependencies:** QA-01, ENV-09, CTL-05, CTL-12
 
 **TDD traceability:** §2.2 (NFR-2–NFR-5), §4.4; decisions D-05, D-18
+
 ---
 
 #### QA-18 · CI pipeline
@@ -2027,6 +2054,7 @@
 **Dependencies:** QA-02, QA-10, ENV-09, UI-17
 
 **TDD traceability:** §15.4 ("against `make up`"), SC-5; decision D-11
+
 ---
 
 ### E8: Self-testing, tuning, and release (`REL`)
@@ -2070,6 +2098,7 @@
 **Dependencies:** ENV-09, ENV-10, ENV-13, ENV-14, QA-12, QA-13
 
 **TDD traceability:** §4.1, §16.2 (Docker host differences risk), SR-8, NFR-4; decisions D-01, D-17, D-19
+
 ---
 
 #### REL-03 · Self-play protocol and evidence log
@@ -2092,6 +2121,7 @@
 **Dependencies:** UI-17, QA-09, CTL-17, ENV-14
 
 **TDD traceability:** §2.6 (SC-1, SC-2c, SC-4), §15.7; decisions D-04, D-12, D-19
+
 ---
 
 #### REL-04 · Blind diagnosability review by fresh AI sessions (SC-2b proxy)
@@ -2112,6 +2142,7 @@
 **Dependencies:** QA-02, UI-06
 
 **TDD traceability:** §2.6 (SC-2b); decisions D-16, D-19
+
 ---
 
 #### REL-05 · Self-play round 1 and tuning
@@ -2138,6 +2169,7 @@
 **Dependencies:** REL-03, REL-01, QA-02, QA-03
 
 **TDD traceability:** §8.7, §15.7, §16.2 (tuning risk); decision D-19
+
 ---
 
 #### REL-06 · Self-play round 2 and success-criteria sign-off
@@ -2164,6 +2196,7 @@
 **Dependencies:** REL-05, REL-04, QA-10, QA-19
 
 **TDD traceability:** §2.6 (all success criteria), §15.7; decision D-19
+
 ---
 
 #### REL-07 · Release candidate and offline readiness
@@ -2189,6 +2222,7 @@
 **Dependencies:** REL-06, REL-02, QA-18, QA-19, SEC-03, SEC-06, SEC-07
 
 **TDD traceability:** §4.1, §5.1, §16.1, NFR-1; decisions D-01, D-03, D-19
+
 ---
 
 ## 5. Traceability matrix
@@ -2336,9 +2370,9 @@
 | D-14 "Confirm all" stored in `localStorage` | UI-10 |
 | D-15 Okabe–Ito palette | UI-06, UI-17 |
 | D-16 No human testers; self-play and AI-proxy reviews | REL-03, REL-04, REL-05, REL-06 |
-| D-19 Solo project and accepted validation gaps | REL-02 to REL-07, SEC-06, ENV-14, CTL-21 |
 | D-17 CI and Colima packet capture | QA-13, QA-18, REL-02 |
 | D-18 Controller-owned feed RNG via SHA-256 | SIM-02, CTL-11, QA-17 |
+| D-19 Solo project and accepted validation gaps | REL-02 to REL-07, SEC-06, ENV-14, CTL-21 |
 
 ---
 
