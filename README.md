@@ -46,3 +46,5 @@ cd ui && npm ci && npm run build
 Run the tests with `make test`. It also checks the nginx proxy policy.
 
 `make check-compose` checks the rendered Compose config against the isolation policy and writes `.escape/preflight-report`. Add `PROFILE=dev` for the dev profile. It needs only Docker: the check runs in a container with no network.
+
+`make verify-isolation` checks the running stack from the host: `escape_internal` is internal, `sim` and `controller` are attached only to it, and `ui` is attached to it and `escape_edge`.
