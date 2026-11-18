@@ -1,6 +1,6 @@
 # Incident Escape Room. Every target is scoped to this project only (TDD §4.7).
 # The logic lives in host/*.sh (POSIX sh), so the host needs only Docker and Make.
-.PHONY: build test check-compose verify-isolation up down status logs dev
+.PHONY: build test check-compose verify-isolation up down status logs dev export-results
 
 PROFILE ?= player
 # ENV-13: every target that talks to Docker first refuses an engine that is not this computer's.
@@ -51,3 +51,8 @@ logs:
 # Hot-reload dev mode (ENV-12): compose.dev.yaml, the same checks, the same single port.
 dev:
 	@ESCAPE_PORT=$(ESCAPE_PORT) KEEP_ON_FAIL=$(KEEP_ON_FAIL) sh host/up.sh dev
+
+# Copy results.jsonl out of the controller on purpose (ENV-14, D-04). Never uploads anything.
+export-results:
+	$(GUARD)
+	@sh host/export-results.sh
