@@ -14,7 +14,7 @@ import sys
 MIN_ENGINE = (28, 0)  # below this, other machines on the LAN may reach ports published to localhost
 MIN_COMPOSE = (2, 20)  # for `up --wait`
 MIN_CPUS = 2
-MIN_MEMORY = 4 * 1024**3
+MIN_MEMORY = 3.5 * 1024**3  # 4 GiB recommended; a 4 GiB VM reports about 3.8 GiB to the engine
 COLIMA_PLUGIN_FIX = ("install docker-compose and docker-buildx, and register them with "
                      "cliPluginsExtraDirs in ~/.docker/config.json")
 

@@ -112,6 +112,12 @@ def test_low_resources_warn_only():
     assert "colima start --cpu 2 --memory 4" in warnings[0]
 
 
+def test_4_gib_vm_reports_less_and_does_not_warn():
+    colima_4g = copy.deepcopy(MAC)
+    colima_4g["info"].update(NCPU=2, MemTotal=int(3.8 * 1024**3))  # `colima start --memory 4`, as seen on a real Mac
+    assert run(colima_4g, "colima", "unix:///Users/me/.colima/default/docker.sock")[1] == []
+
+
 def test_main(monkeypatch, capsys):
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(LINUX)))
     assert host_runtime.main(["--context", "default", "--compose", "5.7.1", "--buildx", "v0.39"]) == 0
