@@ -86,3 +86,13 @@ def test_malformed_or_missing_sim_result_locks(client, isolation):
     app_module.state["isolation"] = PASS
     app_module.link.record({"type": "evt.heartbeat", "isolation": isolation})
     assert error(client.get("/api/health/ready")) == (503, "locked")
+
+
+def test_host_lock_marker_locks(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "HOST_LOCK", tmp_path / "escape-host-lock")
+    app_module.state["isolation"] = PASS
+    app_module.link.last_heartbeat = time.monotonic()
+    assert client.get("/api/health/ready").status_code == 200
+    (tmp_path / "escape-host-lock").touch()
+    body = client.get("/api/health/ready").json()["error"]
+    assert body["code"] == "locked" and body["details"]["failed_checks"] == ["host_check"]

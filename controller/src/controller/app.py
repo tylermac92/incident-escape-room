@@ -6,6 +6,7 @@ code says why: `locked` when an isolation check failed, `sim_unavailable` when t
 
 import asyncio
 import contextlib
+from pathlib import Path
 
 import isolation
 from fastapi import FastAPI, Request
@@ -16,6 +17,8 @@ from starlette.exceptions import HTTPException
 from controller.link import Link
 
 CHECK_INTERVAL_S = 60
+# Written by `make up KEEP_ON_FAIL=1` when a host-side check failed after start (ENV-09).
+HOST_LOCK = Path("/tmp/escape-host-lock")
 
 # Fail closed until the startup check has run.
 state = {"isolation": {"status": "fail", "failed": ["not_run"]}}
@@ -35,6 +38,8 @@ def envelope(status: int, code: str, message: str, details: dict | None = None) 
 def isolation_result() -> dict:
     """The controller's own checks plus sim's (prefixed `sim.`), as last reported over the link."""
     failed = state["isolation"]["failed"] + ([] if link.address_ok else ["sim_address"])
+    if HOST_LOCK.exists():
+        failed = failed + ["host_check"]
     sim = link.sim_isolation
     if sim is not None and sim.get("status") != "pass":
         failed += [f"sim.{check}" for check in sim["failed"] or ["unknown"]]

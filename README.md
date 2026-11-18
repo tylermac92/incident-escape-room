@@ -6,7 +6,7 @@ Everything in this game is a simulation of a made-up store, running on your own 
 
 ## Status
 
-Phase 0 (safety rails) in progress: no gameplay yet. The design is in [`docs/technical-design-document.md`](docs/technical-design-document.md) and the work plan in [`docs/tickets.md`](docs/tickets.md).
+Phase 0 (safety rails) in progress: `make up` and `make down` work, but there is no gameplay yet. The design is in [`docs/technical-design-document.md`](docs/technical-design-document.md) and the work plan in [`docs/tickets.md`](docs/tickets.md).
 
 ## Layout
 
@@ -14,10 +14,27 @@ Phase 0 (safety rails) in progress: no gameplay yet. The design is in [`docs/tec
 |---|---|
 | `sim/` | Simulation engine (Python 3.12, uv). Must never import `controller`. |
 | `controller/` | Game controller (Python 3.12, FastAPI, uv). |
-| `isolation/` | Isolation checks (standard library only): the runtime self-check used by `sim` and `controller`, and the static Compose policy (`compose_policy.py`). |
+| `isolation/` | Isolation checks (standard library only): the runtime self-check used by `sim` and `controller`, plus the host-side checkers run by `host/` scripts. |
 | `ui/` | Player UI (React + TypeScript, Vite). All copy lives in `ui/src/strings/en.json`. |
 | `ui/nginx/` | The edge config: serves the UI, proxies `/api` only to `controller:8000`. `check.sh` enforces that policy. |
 | `compose.yaml` | The disposable Compose project: networks, hardening, health checks, startup order. |
+| `host/` | Host-side scripts behind the make targets (POSIX sh; the host needs only Docker and Make). |
+
+## Running
+
+Needs Docker Engine 28.0 or later with the Compose (v2.20+) and buildx plugins, on Linux or on macOS with Colima, and GNU Make.
+
+```bash
+make up
+```
+
+`make up` checks that the Docker engine is this computer's own, that the runtime and versions are supported, that port 8080 on 127.0.0.1 is free (set `ESCAPE_PORT` to change it), and that the Compose config passes the isolation policy. It then builds any missing images, starts the stack, checks the running networks from the host, and prints the URL. If any check fails, it tears everything down and exits non-zero; `KEEP_ON_FAIL=1` instead leaves a started stack running with the game locked, for debugging.
+
+```bash
+make down
+```
+
+`make down` removes this project's containers, networks, volume and built images, and nothing else. It never prunes. If anything labeled as this project's remains, it lists it and suggests `make down FORCE=1`, which removes only resources carrying the project label.
 
 ## Building
 
@@ -43,8 +60,8 @@ cd controller && uv sync --locked && uv build
 cd ui && npm ci && npm run build
 ```
 
-Run the tests with `make test`. It also checks the nginx proxy policy.
+Run the tests with `make test`. It also self-tests the nginx proxy policy and the engine guard.
 
-`make check-compose` checks the rendered Compose config against the isolation policy and writes `.escape/preflight-report`. Add `PROFILE=dev` for the dev profile. It needs only Docker: the check runs in a container with no network.
+The individual checks can also be run on their own. `make check-compose` checks the rendered Compose config against the isolation policy and writes `.escape/preflight-report`. Add `PROFILE=dev` for the dev profile. It needs only Docker: the check runs in a container with no network.
 
 `make verify-isolation` checks the running stack from the host: `escape_internal` is internal, `sim` and `controller` are attached only to it, and `ui` is attached to it and `escape_edge`.
