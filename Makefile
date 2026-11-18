@@ -3,10 +3,13 @@
 .PHONY: build test check-compose verify-isolation up down status logs dev
 
 PROFILE ?= player
+# ENV-13: every target that talks to Docker first refuses an engine that is not this computer's.
+GUARD = @sh host/engine_guard.sh >/dev/null
 
 # Compose names images <project>-<service>, so `down --rmi local` removes them (ENV-10).
 # The python base is pulled too, so the host checkers work offline afterwards.
 build:
+	$(GUARD)
 	docker compose build
 	. host/lib.sh && docker pull -q "$$PYTHON_IMAGE"
 
@@ -19,10 +22,12 @@ test:
 
 # Static isolation policy (ENV-06, TDD §5.5) over the rendered config. PROFILE=player|dev|test.
 check-compose:
+	$(GUARD)
 	@sh host/check-compose.sh $(PROFILE)
 
 # Host-side check after `up` (ENV-08, TDD §5.5).
 verify-isolation:
+	$(GUARD)
 	@sh host/verify-isolation.sh
 
 # Preflight, start, verify; fail closed (ENV-09). KEEP_ON_FAIL=1 keeps a started stack, locked.
@@ -31,13 +36,16 @@ up:
 
 # Project-scoped teardown (ENV-10). FORCE=1 also removes leftovers selected only by the label.
 down:
+	$(GUARD)
 	@FORCE=$(FORCE) sh host/down.sh
 
 # Both scoped by project name (ENV-11): only this project's containers and logs.
 status:
+	$(GUARD)
 	@docker compose -p incident-escape-room ps -a
 
 logs:
+	$(GUARD)
 	@docker compose -p incident-escape-room logs -f --tail 100
 
 # Hot-reload dev mode (ENV-12): compose.dev.yaml, the same checks, the same single port.
