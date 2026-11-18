@@ -1,6 +1,7 @@
 """sim's only network endpoint, on port 9000 (SIM-10): /healthz and the controller link.
 
-Phase 0 scope: the link only sends heartbeats. Engine commands and ticks arrive with SIM-10.
+Phase 0 scope: the link only sends heartbeats, each carrying the isolation result, so the
+controller can lock on a sim failure. Engine commands and ticks arrive with SIM-10.
 sim never opens outbound connections; this module only serves.
 """
 
@@ -29,14 +30,15 @@ def process_request(connection: ServerConnection, request):
         return connection.respond(status, json.dumps(state["isolation"]) + "\n")
     if request.path != "/link":
         return connection.respond(http.HTTPStatus.NOT_FOUND, "not found\n")
-    if not healthy():
-        return connection.respond(http.HTTPStatus.SERVICE_UNAVAILABLE, "isolation check failed\n")
-    return None  # continue the WebSocket handshake
+    return None  # continue the WebSocket handshake; link() reports a failing check and closes
 
 
 async def link(ws: ServerConnection) -> None:
-    while healthy():
-        await ws.send(json.dumps({"type": "evt.heartbeat"}))
+    # Each heartbeat carries the isolation result; a failing one is sent once, then the link closes.
+    while True:
+        await ws.send(json.dumps({"type": "evt.heartbeat", "isolation": state["isolation"]}))
+        if not healthy():
+            break
         await asyncio.sleep(HEARTBEAT_INTERVAL_S)
     await ws.close(1011, "isolation check failed")
 

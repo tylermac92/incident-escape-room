@@ -21,6 +21,7 @@ def client():
     # No `with`: the lifespan (real checks, real link) does not run in unit tests.
     app_module.state["isolation"] = {"status": "fail", "failed": ["not_run"]}
     app_module.link.last_heartbeat, app_module.link.address_ok = None, True
+    app_module.link.sim_isolation = None
     return TestClient(app_module.app)
 
 
@@ -67,3 +68,21 @@ def test_is_internal():
     assert is_internal("172.18.0.3", ROUTES)
     assert not is_internal("10.1.2.3", ROUTES)   # reachable only through a gateway
     assert not is_internal("8.8.8.8", ROUTES)
+
+
+def test_sim_isolation_failure_locks(client):
+    app_module.state["isolation"] = PASS
+    app_module.link.record({"type": "evt.heartbeat", "isolation": PASS})
+    assert client.get("/api/health/ready").status_code == 200
+
+    app_module.link.record({"type": "evt.heartbeat", "isolation": {"status": "fail", "failed": ["route"]}})
+    app_module.link.last_heartbeat = time.monotonic() - 10  # sim then closes the link: still locked
+    body = client.get("/api/health/ready").json()["error"]
+    assert body["code"] == "locked" and body["details"]["failed_checks"] == ["sim.route"]
+
+
+@pytest.mark.parametrize("isolation", [None, "pass", {"status": "pass"}, {"status": "fail", "failed": []}])
+def test_malformed_or_missing_sim_result_locks(client, isolation):
+    app_module.state["isolation"] = PASS
+    app_module.link.record({"type": "evt.heartbeat", "isolation": isolation})
+    assert error(client.get("/api/health/ready")) == (503, "locked")

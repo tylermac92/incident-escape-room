@@ -41,9 +41,18 @@ class Link:
     def __init__(self) -> None:
         self.last_heartbeat: float | None = None
         self.address_ok = True  # set False for good if sim ever resolves outside the subnet
+        self.sim_isolation: dict | None = None  # sim's own self-check, from its latest heartbeat
 
     def up(self) -> bool:
         return self.last_heartbeat is not None and time.monotonic() - self.last_heartbeat <= HEARTBEAT_TIMEOUT_S
+
+    def record(self, event: object) -> None:
+        if not (isinstance(event, dict) and event.get("type") == "evt.heartbeat"):
+            return
+        self.last_heartbeat = time.monotonic()
+        result = event.get("isolation")
+        ok = isinstance(result, dict) and isinstance(result.get("failed"), list)
+        self.sim_isolation = result if ok else {"status": "fail", "failed": ["malformed"]}
 
     async def run(self) -> None:
         backoff = 1
@@ -59,9 +68,7 @@ class Link:
                 async with connect(f"ws://{ip}:{SIM_PORT}/link", open_timeout=5) as ws:
                     backoff = 1
                     async for message in ws:
-                        event = json.loads(message)
-                        if isinstance(event, dict) and event.get("type") == "evt.heartbeat":
-                            self.last_heartbeat = time.monotonic()
+                        self.record(json.loads(message))
             except (OSError, TimeoutError, ValueError, WebSocketException):
                 pass
             await asyncio.sleep(backoff)

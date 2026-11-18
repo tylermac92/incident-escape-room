@@ -33,7 +33,11 @@ def envelope(status: int, code: str, message: str, details: dict | None = None) 
 
 
 def isolation_result() -> dict:
+    """The controller's own checks plus sim's (prefixed `sim.`), as last reported over the link."""
     failed = state["isolation"]["failed"] + ([] if link.address_ok else ["sim_address"])
+    sim = link.sim_isolation
+    if sim is not None and sim.get("status") != "pass":
+        failed += [f"sim.{check}" for check in sim["failed"] or ["unknown"]]
     return {"status": "fail" if failed else "pass", "failed": failed}
 
 
