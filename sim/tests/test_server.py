@@ -7,7 +7,7 @@ import urllib.request
 
 import pytest
 from websockets.asyncio.client import connect
-from websockets.exceptions import InvalidStatus
+from websockets.exceptions import ConnectionClosed
 
 from sim import server
 
@@ -54,15 +54,28 @@ def test_link_sends_heartbeats_when_healthy():
         async with connect(f"ws://127.0.0.1:{port}/link") as ws:
             return json.loads(await asyncio.wait_for(ws.recv(), 2))
 
-    assert run(PASS, check) == {"type": "evt.heartbeat"}
+    assert run(PASS, check) == {"type": "evt.heartbeat", "isolation": PASS}
 
 
-def test_link_refused_when_isolation_fails():
+def test_link_reports_a_failing_check_then_closes():
     async def check(port):
-        with pytest.raises(InvalidStatus) as err:
-            async with connect(f"ws://127.0.0.1:{port}/link"):
-                pass
-        return err.value.response.status_code
+        async with connect(f"ws://127.0.0.1:{port}/link") as ws:
+            await asyncio.wait_for(ws.recv(), 2)
+            server.state["isolation"] = FAIL  # what the 60 s recheck would do
+            last = json.loads(await asyncio.wait_for(ws.recv(), 3))
+            with pytest.raises(ConnectionClosed) as closed:
+                await asyncio.wait_for(ws.recv(), 3)
+            return last, closed.value.rcvd.code
 
-    assert run(FAIL, check) == 503
+    assert run(PASS, check) == ({"type": "evt.heartbeat", "isolation": FAIL}, 1011)
 
+
+def test_link_reports_failure_at_connect_then_closes():
+    async def check(port):
+        async with connect(f"ws://127.0.0.1:{port}/link") as ws:
+            first = json.loads(await asyncio.wait_for(ws.recv(), 2))
+            with pytest.raises(ConnectionClosed) as closed:
+                await asyncio.wait_for(ws.recv(), 2)
+            return first, closed.value.rcvd.code
+
+    assert run(FAIL, check) == ({"type": "evt.heartbeat", "isolation": FAIL}, 1011)

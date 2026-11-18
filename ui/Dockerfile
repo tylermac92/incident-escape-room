@@ -6,6 +6,14 @@ RUN npm ci
 COPY . .
 RUN npm run build && sh nginx/check.sh
 
+# Dev mode only (ENV-12, compose.dev.yaml): the Vite dev server with the locked dependencies.
+# ./ui is mounted read-only at /src/ui, so imports resolve to /src/node_modules from this stage.
+FROM build AS dev
+LABEL com.incident-escape-room.managed="true"
+USER node
+WORKDIR /src/ui
+CMD ["/src/node_modules/.bin/vite", "--host", "0.0.0.0", "--port", "8080", "--strictPort"]
+
 # Runs as the image's non-root nginx user (UID 101) and listens on 8080.
 FROM nginxinc/nginx-unprivileged:1.28-alpine@sha256:7377697a821c131a924a7105fafbe7414db4e9fcc77a6f08f776f33f141ec3f8
 LABEL com.incident-escape-room.managed="true"

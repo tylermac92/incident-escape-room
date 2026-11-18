@@ -1,6 +1,7 @@
 {
   "app": {
     "title": "Incident Escape Room",
-    "simulationLabel": "SIMULATION · Larkspur Goods sandbox"
+    "simulationLabel": "SIMULATION · Larkspur Goods sandbox",
+    "devRibbon": "DEV BUILD"
   }
 }

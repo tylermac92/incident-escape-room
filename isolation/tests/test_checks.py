@@ -98,6 +98,17 @@ def test_evaluate_reports_each_failed_check():
     assert clean(uid=0, resolve=lambda _n: [])["status"] == "fail"
 
 
+def test_a_check_that_cannot_run_fails_closed():
+    assert clean(route=None)["failed"] == ["route"]  # /proc/net/route unreadable
+    assert clean(route_v6=None)["failed"] == ["route"]
+    assert clean(status="Name:\tpython\n")["failed"] == ["privileges"]  # no CapEff line
+    assert clean(mountinfo="garbage")["failed"] == ["mounts"]
+    assert clean(mountinfo=None)["failed"] == ["mounts"]
+    assert clean(resolve=lambda _n: 1 / 0)["failed"] == ["dns"]
+    assert iso._read("/nonexistent/route") is None
+    assert iso._read("/nonexistent/route", missing="") == ""
+
+
 def test_run_against_this_machine_returns_a_result():
     result = iso.run()
     assert result["status"] in {"pass", "fail"} and isinstance(result["failed"], list)

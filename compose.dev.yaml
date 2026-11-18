@@ -1,0 +1,29 @@
+# Dev mode only (ENV-12, D-06): `make dev` applies this over compose.yaml; `make up` never does.
+# The network shape is unchanged: one published port, sim and controller on escape_internal only.
+# The only relaxations the policy allows are these read-only source mounts and ESCAPE_DEV=1 (ENV-06).
+services:
+  sim:
+    working_dir: /app/sim/src  # `python -m sim` then imports the mounted source first
+    command: ["python", "/app/sim/devtools/reload.py", "/app/sim/src", "python", "-m", "sim"]
+    environment: { ESCAPE_DEV: "1" }
+    volumes:
+      - { type: bind, source: ./sim, target: /app/sim, read_only: true }
+
+  controller:
+    command: ["uvicorn", "controller.app:app", "--app-dir", "/app/controller/src",
+              "--reload", "--reload-dir", "/app/controller/src", "--host", "0.0.0.0", "--port", "8000"]
+    environment: { ESCAPE_DEV: "1" }
+    volumes:
+      - { type: bind, source: ./controller, target: /app/controller, read_only: true }
+
+  ui:
+    image: incident-escape-room-ui-dev  # its own tag, so the player image is never replaced
+    build: { context: ./ui, target: dev }
+    volumes:
+      - { type: bind, source: ./ui, target: /src/ui, read_only: true }
+    # Hides any host node_modules (possibly another platform's binaries) and holds the Vite cache.
+    tmpfs: ["/src/ui/node_modules:size=128m,uid=1000,gid=1000"]
+    cpus: 1
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]

@@ -1,0 +1,7 @@
+# Applied only by `make test` (ENV-11, TDD §15.1): enables the deterministic test controls.
+# `make up` never applies it, and the player-profile policy check rejects ESCAPE_TEST_MODE (ENV-06).
+services:
+  sim:
+    environment: { ESCAPE_TEST_MODE: "1" }
+  controller:
+    environment: { ESCAPE_TEST_MODE: "1" }

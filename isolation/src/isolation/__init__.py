@@ -87,31 +87,42 @@ def dns_probe_resolves(resolve: Callable[[str], object]) -> bool:
 
 
 def evaluate(
-    route: str, route_v6: str, status: str, uid: int, mountinfo: str, dev: bool,
+    route: str | None, route_v6: str | None, status: str | None, uid: int, mountinfo: str | None, dev: bool,
     environ: Mapping[str, str], exists: Callable[[str], bool], resolve: Callable[[str], object],
 ) -> dict:
     checks = {
-        "route": has_default_route(route) or has_default_route_v6(route_v6),
-        "privileges": is_privileged(status, uid),
-        "mounts": bool(forbidden_mounts(mountinfo, dev)),
-        "docker_socket": bool(docker_sockets_present(exists)),
-        "credentials": bool(credentials_present(environ, exists)),
-        "dns": dns_probe_resolves(resolve),
+        "route": lambda: has_default_route(route) or has_default_route_v6(route_v6),
+        "privileges": lambda: is_privileged(status, uid),
+        "mounts": lambda: forbidden_mounts(mountinfo, dev),
+        "docker_socket": lambda: docker_sockets_present(exists),
+        "credentials": lambda: credentials_present(environ, exists),
+        "dns": lambda: dns_probe_resolves(resolve),
     }
-    failed = [name for name, failing in checks.items() if failing]
+    failed = [name for name, check in checks.items() if _fails(check)]
     return {"status": "fail" if failed else "pass", "failed": failed}
 
 
-def _read(path: str) -> str:
-    p = Path(path)
-    return p.read_text() if p.exists() else ""
+def _fails(check: Callable[[], object]) -> bool:
+    """A check that cannot run (unreadable /proc file, unexpected format) fails closed."""
+    try:
+        return bool(check())
+    except Exception:
+        return True
+
+
+def _read(path: str, missing: str | None = None) -> str | None:
+    """File text, or `missing` if it can't be read; None makes the check using it fail."""
+    try:
+        return Path(path).read_text()
+    except OSError:
+        return missing
 
 
 def run() -> dict:
     """Run every check against this process's real state."""
     return evaluate(
         route=_read("/proc/net/route"),
-        route_v6=_read("/proc/net/ipv6_route"),
+        route_v6=_read("/proc/net/ipv6_route", missing=""),  # absent when IPv6 is off
         status=_read("/proc/self/status"),
         uid=os.getuid(),
         mountinfo=_read("/proc/self/mountinfo"),
