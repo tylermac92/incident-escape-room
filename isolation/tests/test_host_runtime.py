@@ -1,8 +1,9 @@
 """ENV-13 runtime detection, versions, and resources.
 
 LINUX is trimmed from real `docker version`/`docker info` output (Docker Engine 29.10, Ubuntu).
-The other runtimes are built in the same shape from their known distinguishing fields
-(not recorded here): Podman's "Podman Engine" component, Docker Desktop's OperatingSystem,
+COLIMA is trimmed from real output on an Apple Silicon Mac (Colima, Engine 28.4, arm64 VM
+with 4 GiB). The other runtimes are built in the same shape from their known distinguishing
+fields (not recorded here): Podman's "Podman Engine" component, Docker Desktop's OperatingSystem,
 Colima's context name and socket path, and WSL2's kernel name.
 """
 
@@ -38,6 +39,17 @@ def variant(client_os="linux", components=("Engine",), os_name="Ubuntu 24.04.5 L
 
 
 MAC = variant(client_os="darwin", Arch="arm64")
+COLIMA = {
+    "version": {
+        "Client": {"Platform": {"Name": "Docker Engine - Community"}, "Version": "29.10.0", "Os": "darwin", "Arch": "arm64", "Context": "colima"},
+        "Server": {"Platform": {"Name": "Docker Engine - Community"}, "Version": "28.4.0", "Os": "linux", "Arch": "arm64",
+                   "Components": [{"Name": "Engine", "Version": "28.4.0"}, {"Name": "containerd", "Version": "1.7.27"},
+                                  {"Name": "runc", "Version": "1.2.5"}, {"Name": "docker-init", "Version": "0.19.0"}]},
+    },
+    "info": {"OperatingSystem": "Ubuntu 24.04.2 LTS", "KernelVersion": "6.8.0-64-generic", "NCPU": 2, "MemTotal": 4095299584},
+}
+COLIMA_SOCKET = "unix:///Users/me/.colima/default/docker.sock"
+COLIMA_PLUGINS = ("5.8.0", "github.com/docker/buildx v0.39.0")
 
 
 def run(state, context=LOCAL[0], endpoint=LOCAL[1], compose=PLUGINS[0], buildx=PLUGINS[1]):
@@ -54,9 +66,9 @@ def test_version_parsing():
 
 @pytest.mark.parametrize("state, context, endpoint, expected", [
     (LINUX, *LOCAL, "linux-engine"),
-    (MAC, "colima", "unix:///Users/me/.colima/default/docker.sock", "colima"),
+    (COLIMA, "colima", COLIMA_SOCKET, "colima"),
     (MAC, "colima-work", "unix:///Users/me/.colima/work/docker.sock", "colima"),
-    (MAC, "default", "unix:///Users/me/.colima/default/docker.sock", "colima"),  # DOCKER_HOST at the socket
+    (COLIMA, "default", COLIMA_SOCKET, "colima"),  # DOCKER_HOST at the socket
     (variant(client_os="darwin", os_name="Docker Desktop"), "desktop-linux",
      "unix:///Users/me/.docker/run/docker.sock", "docker-desktop"),
     (variant(client_os="windows", os_name="Docker Desktop", kernel="5.15.153.1-microsoft-standard-WSL2"),
@@ -73,8 +85,9 @@ def test_supported_runtimes_pass_cleanly():
     line, warnings, failures = run(LINUX)
     assert line == "runtime: Linux Docker Engine, engine 29.10.0, amd64"
     assert (warnings, failures) == ([], [])
-    line, warnings, failures = run(MAC, "colima", "unix:///Users/me/.colima/default/docker.sock")
-    assert line == "runtime: Colima, engine 29.10.0, arm64" and (warnings, failures) == ([], [])
+    # The recorded 4 GiB VM reports 3.8 GiB, which must not trigger the memory warning.
+    line, warnings, failures = run(COLIMA, "colima", COLIMA_SOCKET, *COLIMA_PLUGINS)
+    assert line == "runtime: Colima, engine 28.4.0, arm64" and (warnings, failures) == ([], [])
 
 
 def test_podman_is_refused():
@@ -96,7 +109,7 @@ def test_versions_and_plugins():
     assert run(LINUX, compose="v2.20.0")[2] == []
     assert "Compose plugin is missing" in run(LINUX, compose="")[2][0]
     assert "buildx plugin is missing" in run(LINUX, buildx="")[2][0]
-    colima = run(MAC, "colima", "unix:///Users/me/.colima/default/docker.sock", compose="", buildx="")[2]
+    colima = run(COLIMA, "colima", COLIMA_SOCKET, compose="", buildx="")[2]
     assert len(colima) == 2 and all("cliPluginsExtraDirs" in f for f in colima)
     assert "cliPluginsExtraDirs" not in run(LINUX, compose="")[2][0]
 
@@ -106,16 +119,10 @@ def test_low_resources_warn_only():
     small["info"].update(NCPU=1, MemTotal=2 * 1024**3)
     _, warnings, failures = run(small)
     assert failures == [] and "1 CPUs and 2.0 GiB" in warnings[0] and "colima start" not in warnings[0]
-    small_mac = copy.deepcopy(MAC)
-    small_mac["info"].update(NCPU=2, MemTotal=2 * 1024**3)
-    _, warnings, _ = run(small_mac, "colima", "unix:///Users/me/.colima/default/docker.sock")
+    small_mac = copy.deepcopy(COLIMA)
+    small_mac["info"].update(MemTotal=2 * 1024**3)
+    _, warnings, _ = run(small_mac, "colima", COLIMA_SOCKET)
     assert "colima start --cpu 2 --memory 4" in warnings[0]
-
-
-def test_4_gib_vm_reports_less_and_does_not_warn():
-    colima_4g = copy.deepcopy(MAC)
-    colima_4g["info"].update(NCPU=2, MemTotal=int(3.8 * 1024**3))  # `colima start --memory 4`, as seen on a real Mac
-    assert run(colima_4g, "colima", "unix:///Users/me/.colima/default/docker.sock")[1] == []
 
 
 def test_main(monkeypatch, capsys):
