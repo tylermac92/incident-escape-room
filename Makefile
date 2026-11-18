@@ -10,12 +10,14 @@ build:
 	docker compose build
 	. host/lib.sh && docker pull -q "$$PYTHON_IMAGE"
 
+# Unit suites and self-tests, then a stack in the test profile (ESCAPE_TEST_MODE=1), torn down after.
 test:
 	for p in isolation sim controller; do (cd $$p && uv run --locked pytest -q) || exit 1; done
 	sh ui/nginx/check_test.sh
 	sh host/engine_guard_test.sh
+	@ESCAPE_PORT=$(ESCAPE_PORT) sh host/test-stack.sh
 
-# Static isolation policy (ENV-06, TDD §5.5) over the rendered config. PROFILE=player|dev.
+# Static isolation policy (ENV-06, TDD §5.5) over the rendered config. PROFILE=player|dev|test.
 check-compose:
 	@sh host/check-compose.sh $(PROFILE)
 
@@ -31,6 +33,13 @@ up:
 down:
 	@FORCE=$(FORCE) sh host/down.sh
 
-status logs dev:
-	@echo "make $@ is not implemented yet (see docs/tickets.md, ENV-11 and ENV-12)." >&2
+# Both scoped by project name (ENV-11): only this project's containers and logs.
+status:
+	@docker compose -p incident-escape-room ps -a
+
+logs:
+	@docker compose -p incident-escape-room logs -f --tail 100
+
+dev:
+	@echo "make dev is not implemented yet (see docs/tickets.md, ENV-12)." >&2
 	@exit 1

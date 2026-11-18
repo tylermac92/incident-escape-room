@@ -47,7 +47,7 @@ def dev_mount(source, read_only=True):
     return {"type": "bind", "source": source, "target": "/app/src", "read_only": read_only}
 
 
-@pytest.mark.parametrize("profile", ["player", "dev"])
+@pytest.mark.parametrize("profile", ["player", "dev", "test"])
 def test_shipped_shape_passes(profile):
     assert violations(GOOD, profile, ROOT) == []
 
@@ -122,3 +122,16 @@ def test_main_reports_and_exits(monkeypatch, capsys):
 
     monkeypatch.setattr("sys.stdin", io.StringIO("not json"))
     assert compose_policy.main([]) == 1
+
+
+def test_test_mode_flag_only_in_the_test_profile():
+    def test_mode(c):
+        for name in ("sim", "controller"):
+            c["services"][name]["environment"] = {"ESCAPE_TEST_MODE": "1"}
+    assert rules(mutate(test_mode), "test") == set()
+    assert rules(mutate(test_mode), "player") == {"environment"}  # the test override under make up
+    assert rules(mutate(test_mode), "dev") == {"environment"}
+    other_value = mutate(lambda c: c["services"]["sim"].update(environment={"ESCAPE_TEST_MODE": "yes"}))
+    assert rules(other_value, "test") == {"environment"}
+    dev_in_test = mutate(lambda c: c["services"]["sim"].update(environment={"ESCAPE_DEV": "1"}))
+    assert rules(dev_in_test, "test") == {"environment"}

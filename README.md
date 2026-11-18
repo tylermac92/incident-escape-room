@@ -34,6 +34,8 @@ make up
 make down
 ```
 
+`make status` shows this project's containers and their health, and `make logs` streams their logs.
+
 `make down` removes this project's containers, networks, volume and built images, and nothing else. It never prunes. If anything labeled as this project's remains, it lists it and suggests `make down FORCE=1`, which removes only resources carrying the project label.
 
 ## Building
@@ -60,8 +62,8 @@ cd controller && uv sync --locked && uv build
 cd ui && npm ci && npm run build
 ```
 
-Run the tests with `make test`. It also self-tests the nginx proxy policy and the engine guard.
+Run the tests with `make test`. After the unit suites and the self-tests of the nginx proxy policy and the engine guard, it starts a stack in the test profile (`compose.test.yaml`, which sets `ESCAPE_TEST_MODE=1`) through the same checks as `make up`, and tears it down afterward, keeping the images. It needs uv and Docker, and refuses to run while a `make up` stack is running. For a quick run of one package, use `cd sim && uv run --locked pytest -q`.
 
-The individual checks can also be run on their own. `make check-compose` checks the rendered Compose config against the isolation policy and writes `.escape/preflight-report`. Add `PROFILE=dev` for the dev profile. It needs only Docker: the check runs in a container with no network.
+The individual checks can also be run on their own. `make check-compose` checks the rendered Compose config against the isolation policy and writes `.escape/preflight-report`. Add `PROFILE=dev` or `PROFILE=test` for those profiles; `ESCAPE_DEV` and `ESCAPE_TEST_MODE` are each allowed only in their own profile. It needs only Docker: the check runs in a container with no network.
 
 `make verify-isolation` checks the running stack from the host: `escape_internal` is internal, `sim` and `controller` are attached only to it, and `ui` is attached to it and `escape_edge`.

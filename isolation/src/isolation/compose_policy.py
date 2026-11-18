@@ -17,6 +17,8 @@ FORBIDDEN_OPTIONS = ("network_mode", "privileged", "cap_add", "devices", "pid", 
 DEV_SOURCE_DIRS = ("ui", "controller", "sim")
 ENV_ALLOWED = re.compile(r"ESCAPE_[A-Z0-9_]+|TZ")
 UI_SERVICE = "ui"
+# Flags allowed only in one profile: make up (player) can never enable dev or test mode.
+MODE_FLAGS = {"ESCAPE_DEV": "dev", "ESCAPE_TEST_MODE": "test"}
 
 
 def _labelled(resource):
@@ -77,11 +79,11 @@ def violations(config, profile="player", root=""):
             elif kind != "tmpfs":
                 found.append(("host-mount", f"{name} mounts {kind} {source!r} at {target!r}"))
 
-        # 4. Environment variables stay inside the allowlist; ESCAPE_DEV=1 only in dev.
+        # 4. Environment variables stay inside the allowlist; each mode flag only in its own profile.
         for var, value in (svc.get("environment") or {}).items():
-            if var == "ESCAPE_DEV":
-                if not (dev and value == "1"):
-                    found.append(("environment", f"{name} sets ESCAPE_DEV={value} in the {profile} profile"))
+            if var in MODE_FLAGS:
+                if not (profile == MODE_FLAGS[var] and value == "1"):
+                    found.append(("environment", f"{name} sets {var}={value} in the {profile} profile"))
             elif not ENV_ALLOWED.fullmatch(var):
                 found.append(("environment", f"{name} sets {var}, outside the allowlist (ESCAPE_*, TZ)"))
 
@@ -106,7 +108,7 @@ def report(found, profile):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--profile", choices=("player", "dev"), default="player")
+    parser.add_argument("--profile", choices=("player", "dev", "test"), default="player")
     parser.add_argument("--root", default="", help="host project directory (for dev source mounts)")
     args = parser.parse_args(argv)
     try:

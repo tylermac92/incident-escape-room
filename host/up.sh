@@ -3,10 +3,13 @@
 # Order: engine guard, runtime preflight, port, static policy, build if missing,
 # up --wait, host-side verification. Any failure tears down, unless KEEP_ON_FAIL=1
 # and the stack had already started: then it stays up with the controller locked.
+# Usage: host/up.sh [player|test]; test is used only by make test (ENV-11).
 set -u
 . host/lib.sh
+profile=${1:-player}
+case $profile in player|test) ;; *) echo "profile must be player or test" >&2; exit 2 ;; esac
 port=${ESCAPE_PORT:-8080}
-rendered=.escape/compose.player.json
+rendered=.escape/compose.$profile.json
 
 fail() {  # fail <what failed> <fix hint>
     echo "make up: FAILED: $1" >&2
@@ -60,8 +63,8 @@ if [ -z "$ours" ] && command -v bash >/dev/null \
     exit 1
 fi
 
-# 4. Static isolation policy, player profile (ENV-06). Writes the rendered config we start from.
-sh host/check-compose.sh player \
+# 4. Static isolation policy (ENV-06). Writes the rendered config we start from.
+sh host/check-compose.sh "$profile" \
     || fail_closed "static isolation policy" "remove the override or setting named above; see .escape/preflight-report"
 
 # 5. Build only if an image is missing (a prepared machine plays offline).

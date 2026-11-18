@@ -5,7 +5,10 @@
 set -u
 . host/lib.sh
 
-docker compose -p "$PROJECT" down --volumes --remove-orphans --rmi local
+# KEEP_IMAGES=1 (used by make test) keeps the built images for the next run.
+[ "${KEEP_IMAGES:-0}" = 1 ] && rmi="" || rmi="--rmi local"
+# shellcheck disable=SC2086  # rmi is empty or two words
+docker compose -p "$PROJECT" down --volumes --remove-orphans $rmi
 
 # shellcheck disable=SC2046  # word-split ID lists
 if [ "${FORCE:-0}" = 1 ]; then
