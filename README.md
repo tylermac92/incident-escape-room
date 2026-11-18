@@ -36,6 +36,8 @@ make down
 
 `make status` shows this project's containers and their health, and `make logs` streams their logs.
 
+`make export-results` copies your results file out of the running game to `./escape-results-<UTC timestamp>.jsonl` and prints the number of rounds and the field names. It refuses to export a file with any player-identifying field. Nothing is ever uploaded: the game never sends data anywhere, and this copy is yours. `make down` does not delete it.
+
 `make down` removes this project's containers, networks, volume and built images, and nothing else. It never prunes. If anything labeled as this project's remains, it lists it and suggests `make down FORCE=1`, which removes only resources carrying the project label.
 
 ## Building
