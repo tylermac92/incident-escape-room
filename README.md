@@ -14,7 +14,7 @@ Phase 0 (safety rails) in progress: no gameplay yet. The design is in [`docs/tec
 |---|---|
 | `sim/` | Simulation engine (Python 3.12, uv). Must never import `controller`. |
 | `controller/` | Game controller (Python 3.12, FastAPI, uv). |
-| `isolation/` | Runtime isolation self-check, used by both `sim` and `controller` (standard library only). |
+| `isolation/` | Isolation checks (standard library only): the runtime self-check used by `sim` and `controller`, and the static Compose policy (`compose_policy.py`). |
 | `ui/` | Player UI (React + TypeScript, Vite). All copy lives in `ui/src/strings/en.json`. |
 | `ui/nginx/` | The edge config: serves the UI, proxies `/api` only to `controller:8000`. `check.sh` enforces that policy. |
 | `compose.yaml` | The disposable Compose project: networks, hardening, health checks, startup order. |
@@ -44,3 +44,5 @@ cd ui && npm ci && npm run build
 ```
 
 Run the tests with `make test`. It also checks the nginx proxy policy.
+
+`make check-compose` checks the rendered Compose config against the isolation policy and writes `.escape/preflight-report`. Add `PROFILE=dev` for the dev profile. It needs only Docker: the check runs in a container with no network.
