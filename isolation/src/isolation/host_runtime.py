@@ -55,7 +55,9 @@ def evaluate(version, info, context, endpoint, compose, buildx):
     warnings, failures = [], []
 
     if runtime == "podman":
-        return line, warnings, ["Podman is not supported; use Docker Engine (Linux) or Colima (macOS)."]
+        return line, warnings, ["Podman is not supported; use Docker Engine (Linux) or Colima (macOS). "
+                                "If one is installed, point docker at it: `docker context ls`, then "
+                                "`docker context use <name>` (and unset DOCKER_HOST if it is set)."]
     if runtime in ("docker-desktop", "wsl2", "other"):
         warnings.append(f"untested runtime ({NAMES[runtime]}): continuing only if every isolation check passes.")
 

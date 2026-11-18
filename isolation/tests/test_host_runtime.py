@@ -92,7 +92,7 @@ def test_supported_runtimes_pass_cleanly():
 
 def test_podman_is_refused():
     _, _, failures = run(variant(components=("Podman Engine",), Version="5.2.0"))
-    assert len(failures) == 1 and "Podman is not supported" in failures[0]
+    assert len(failures) == 1 and "Podman is not supported" in failures[0] and "docker context use" in failures[0]
 
 
 @pytest.mark.parametrize("state", [variant(os_name="Docker Desktop"), variant(kernel="5.15-microsoft-standard-WSL2"),
