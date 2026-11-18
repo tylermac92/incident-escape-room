@@ -3,11 +3,11 @@
 # Order: engine guard, runtime preflight, port, static policy, build if missing,
 # up --wait, host-side verification. Any failure tears down, unless KEEP_ON_FAIL=1
 # and the stack had already started: then it stays up with the controller locked.
-# Usage: host/up.sh [player|test]; test is used only by make test (ENV-11).
+# Usage: host/up.sh [player|test|dev]; test is used only by make test (ENV-11), dev by make dev (ENV-12).
 set -u
 . host/lib.sh
 profile=${1:-player}
-case $profile in player|test) ;; *) echo "profile must be player or test" >&2; exit 2 ;; esac
+case $profile in player|test|dev) ;; *) echo "profile must be player, test or dev" >&2; exit 2 ;; esac
 port=${ESCAPE_PORT:-8080}
 rendered=.escape/compose.$profile.json
 
@@ -49,6 +49,16 @@ runtime=$(run_checker host_runtime.py --context "$context" --endpoint "$endpoint
     --buildx "$(docker buildx version 2>/dev/null)" < .escape/runtime.json)
 status=$?
 echo "$runtime"
+if [ "$profile" = dev ]; then
+    case $runtime in "runtime: Colima"*)
+        case $PWD/ in "$HOME"/*) ;; *)
+            echo "WARN dev mode mounts this repository into the containers, and Colima shares only your home directory by default." >&2
+            echo "  fix: move the repository under $HOME, or add its directory to mounts in ~/.colima/default/colima.yaml" >&2 ;;
+        esac ;;
+    esac
+    # The tmpfs that hides ui/node_modules needs its mount point inside the read-only ./ui mount.
+    mkdir -p ui/node_modules
+fi
 [ "$status" = 0 ] || { fail "host runtime preflight" "see the FAIL lines above"; exit 1; }
 
 # 3. The port is free on 127.0.0.1, unless it is our own ui from an earlier make up.
@@ -68,7 +78,8 @@ sh host/check-compose.sh "$profile" \
     || fail_closed "static isolation policy" "remove the override or setting named above; see .escape/preflight-report"
 
 # 5. Build only if an image is missing (a prepared machine plays offline).
-if ! docker image inspect "$PROJECT-sim" "$PROJECT-controller" "$PROJECT-ui" >/dev/null 2>&1; then
+# shellcheck disable=SC2046  # word-split image list
+if ! docker image inspect $(docker compose -f "$rendered" config --images) >/dev/null 2>&1; then
     docker compose -f "$rendered" --project-directory . build \
         || fail_closed "image build" "check the build output above; the first build needs network access"
 fi

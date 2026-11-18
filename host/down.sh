@@ -9,6 +9,10 @@ set -u
 [ "${KEEP_IMAGES:-0}" = 1 ] && rmi="" || rmi="--rmi local"
 # shellcheck disable=SC2086  # rmi is empty or two words
 docker compose -p "$PROJECT" down --volumes --remove-orphans $rmi
+# The dev ui image has its own tag (compose.dev.yaml), which `--rmi local` does not cover.
+if [ -n "$rmi" ] && docker image inspect "$PROJECT-ui-dev" >/dev/null 2>&1; then
+    docker image rm "$PROJECT-ui-dev" >/dev/null
+fi
 
 # shellcheck disable=SC2046  # word-split ID lists
 if [ "${FORCE:-0}" = 1 ]; then

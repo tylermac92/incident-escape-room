@@ -46,6 +46,16 @@ make down
 make build
 ```
 
+## Dev mode
+
+```bash
+make dev
+```
+
+`make dev` runs the same checks as `make up` with `compose.dev.yaml` applied. `./sim`, `./controller` and `./ui` are mounted read-only into their containers. `sim` and `controller` restart when their Python source changes, and `ui` runs the Vite dev server with hot reload, on the same single port, `127.0.0.1:8080`. The page shows a "DEV BUILD" ribbon. The network shape is unchanged: `sim` and `controller` stay on the internal network only. `make up` never applies the dev override, and its policy check rejects one passed to it. Stop with `make down`.
+
+Running Vite directly on the host (`npm run dev`) is not supported: the game's API is reachable only inside the containers. On Colima, the repository must be under a directory Colima shares with its VM (your home directory by default); `make dev` warns if it is not.
+
 ## Building packages without Docker
 
 For working on one package, with [uv](https://docs.astral.sh/uv/) and Node.js 22 with npm:

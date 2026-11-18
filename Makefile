@@ -40,6 +40,6 @@ status:
 logs:
 	@docker compose -p incident-escape-room logs -f --tail 100
 
+# Hot-reload dev mode (ENV-12): compose.dev.yaml, the same checks, the same single port.
 dev:
-	@echo "make dev is not implemented yet (see docs/tickets.md, ENV-12)." >&2
-	@exit 1
+	@ESCAPE_PORT=$(ESCAPE_PORT) KEEP_ON_FAIL=$(KEEP_ON_FAIL) sh host/up.sh dev

@@ -6,7 +6,7 @@ set -u
 profile=${1:-player}
 case $profile in
     player) files="" ;;
-    dev) files="--profile dev" ;;
+    dev) files="-f compose.yaml -f compose.dev.yaml" ;;  # make dev only (ENV-12)
     test) files="-f compose.yaml -f compose.test.yaml" ;;  # make test only (ENV-11)
     *) echo "profile must be player, dev or test" >&2; exit 2 ;;
 esac
