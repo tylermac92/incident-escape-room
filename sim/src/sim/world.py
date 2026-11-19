@@ -125,9 +125,10 @@ class World:
             effect = lambda: self.flags.__setitem__(target, action["params"]["enabled"])  # noqa: E731
         elif kind == "set_retry_policy":  # retries decided after this use the new policy
             effect = lambda: setattr(self._services([target])[0], "policy", action["params"]["mode"])  # noqa: E731
-        else:
-            # shortcut: the queue actions only report being applied until SCN-10.
-            effect = lambda: None  # noqa: E731
+        elif kind == "quarantine_head_message":
+            effect = lambda: self._lose([self.jobs.quarantine_head()])  # noqa: E731
+        else:  # purge_queue
+            effect = lambda: self._lose(self.jobs.purge())  # noqa: E731
 
         def complete():
             effect()
@@ -141,7 +142,11 @@ class World:
         for service in self._services(names):  # worker first: its in-flight jobs return to jobs
             service.go_down(self.engine.now_ms)
         if empty_jobs:  # the simulated queue is not persistent (§10.1)
-            self.bad.lost([m for m in self.jobs.remove_all() if not m.malformed])  # malformed: never a real order
+            self._lose(self.jobs.remove_all())
+
+    def _lose(self, msgs):
+        """Orders removed from jobs are order_lost; the malformed message was never a real order."""
+        self.bad.lost([m for m in msgs if m is not None and not m.malformed])
 
     def _come_up(self, names):
         for service in self._services(names):

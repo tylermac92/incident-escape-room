@@ -76,6 +76,22 @@ class Jobs:
             self.waiting.appendleft(crashed)
         self.in_flight.clear()
 
+    def quarantine_head(self) -> Message | None:
+        """quarantine_head_message (SCN-10): the head message moves to jobs.dlq."""
+        if not self.waiting:
+            return None
+        msg = self.waiting.popleft()
+        self.dlq.append(msg)
+        return msg
+
+    def purge(self) -> list[Message]:
+        """purge_queue (SCN-10): delete every queued message. Jobs being processed stay with the
+        consumer, as unacknowledged messages do."""
+        removed = [*self.waiting, *(m for _, _, m in self._requeue)]
+        self.waiting.clear()
+        self._requeue.clear()
+        return removed
+
     def remove_all(self) -> list[Message]:
         """Empty jobs (restart_all, purge_queue): every message, waiting, in flight or delayed."""
         removed = self.all_messages()
