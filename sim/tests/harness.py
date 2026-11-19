@@ -88,3 +88,14 @@ def run_to_page(scenario_id, seed, after_s=60, limit_s=900):
             t0 = len(ticks(events)) - 1
             run_s(w, after_s)
             return w, events, (fired[0] if fired else None), t0
+
+
+def act(w, kind, target=None, **params):
+    """Submit an action as the link would (cmd.action); returns its id."""
+    action_id = f"a{len(w.engine._pending)}-{w.engine.steps}"
+    w.submit_action({"action_id": action_id, "type": kind, "target": target, "params": params})
+    return action_id
+
+
+def applied(events):
+    return {e["action_id"]: e["sim_time_ms"] for e in events if e["type"] == "evt.action_applied"}

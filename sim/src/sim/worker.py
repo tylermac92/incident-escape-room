@@ -40,14 +40,33 @@ class Worker:
         self.pool_used = 0  # slots with a write in flight at the end of this step, for pool_in_use
         self.down_until = 0  # consumer restart after a crash
         self.crash_looping = False  # set by a crash, cleared by the next completed job
+        self.restarting = False  # restart_service / restart_all (SCN-08)
 
     @property
     def status(self) -> str:
-        return "Crash-looping" if self.crash_looping else "Up"
+        return "Restarting" if self.restarting else "Crash-looping" if self.crash_looping else "Up"
+
+    def go_down(self, now_ms: int) -> None:
+        """A restart begins (SCN-08): in-flight jobs go back to the head, unacknowledged; orders wait."""
+        self.restarting = True
+        for slot in self.slots:
+            if slot and slot.call:
+                slot.call.abandoned = True
+        self.jobs.redeliver_all()
+        self.slots = [None] * SLOTS
+        self.crash_looping = False  # a fresh consumer
+
+    def come_up(self, now_ms: int) -> None:
+        self.restarting = False
+        self.down_until = now_ms
+        self.free_at = [now_ms] * SLOTS
 
     def step(self, now_ms: int) -> None:
         end = now_ms + STEP_MS
         self.jobs.step(now_ms)
+        if self.restarting:
+            self.pool_used = 0
+            return
         # ledger has run this step, so every answer before `end` is known exactly.
         for i, slot in enumerate(self.slots):
             call = slot and slot.call

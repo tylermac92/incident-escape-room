@@ -111,12 +111,35 @@ class World:
             "hidden": {"scenario_id": self.scenario_id, "fault": self.injector.hidden()},
         }
 
-    def submit_action(self, cmd: dict) -> None:
-        """A validated cmd.action; evt.action_applied is emitted when its delay has passed."""
-        # shortcut: actions only report being applied; their effects arrive with SCN-08 to SCN-10.
-        self.engine.submit(lambda: self.emit({"type": "evt.action_applied", "action_id": cmd["action_id"],
-                                              "sim_time_ms": self.engine.now_ms}),
-                           ACTIONS[cmd["type"]][0])
+    def submit_action(self, action: dict) -> None:
+        """A validated cmd.action (§10.1). It takes effect at the next step; evt.action_applied is
+        emitted once its delay has passed (for a restart: when the service is back)."""
+        kind, target = action["type"], action.get("target")
+        if kind in ("restart_service", "restart_all"):
+            names = [target] if kind == "restart_service" else ["worker", "api", "ledger"]
+            self.engine.submit(lambda: self._go_down(names, empty_jobs=kind == "restart_all"))
+            effect = lambda: self._come_up(names)  # noqa: E731
+        else:
+            # shortcut: the other actions only report being applied until SCN-09 and SCN-10.
+            effect = lambda: None  # noqa: E731
+
+        def complete():
+            effect()
+            self.emit({"type": "evt.action_applied", "action_id": action["action_id"], "sim_time_ms": self.engine.now_ms})
+        self.engine.submit(complete, ACTIONS[kind][0])
+
+    def _services(self, names):
+        return [{"api": self.api, "worker": self.worker, "ledger": self.ledger}[n] for n in names]
+
+    def _go_down(self, names, empty_jobs):
+        for service in self._services(names):  # worker first: its in-flight jobs return to jobs
+            service.go_down(self.engine.now_ms)
+        if empty_jobs:  # the simulated queue is not persistent (§10.1)
+            self.bad.lost([m for m in self.jobs.remove_all() if not m.malformed])  # malformed: never a real order
+
+    def _come_up(self, names):
+        for service in self._services(names):
+            service.come_up(self.engine.now_ms)
 
     def inject_slowdown(self, duration_s: int) -> None:
         """Test only (D-10): multiply ledger hold times for duration_s, from the next step."""

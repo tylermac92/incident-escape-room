@@ -38,15 +38,38 @@ class Ledger:
         self._running: list = []  # (done ms, seq, call)
         self._seq = 0
 
+        self.up = True  # False while Restarting (SCN-08)
+
     @property
     def status(self) -> str:
-        return "Up"  # shortcut: no downtime until restart actions (SCN-08) add Restarting
+        return "Up" if self.up else "Restarting"
+
+    def go_down(self, now_ms: int) -> None:
+        """A restart begins (SCN-08): queued and running queries are lost without an answer, so their
+        callers time out, and every lease is released, leaked ones included."""
+        self.up = False
+        self.queue.clear()
+        for _, _, call in self._running:
+            call.done_ms = call.reason = None
+        self._running.clear()
+        self.release_all(now_ms)
+
+    def come_up(self, now_ms: int) -> None:
+        self.up = True
+
+    def release_all(self, t_ms: int) -> None:
+        """Every connection is free from t_ms (restart, recycle_pool)."""
+        self.busy_until = [float(t_ms)] * self.pool_size
+        self._leases = [[s, min(e, t_ms)] for s, e in self._leases]
 
     def in_use(self, t_ms: float) -> int:
         return sum(1 for b in self.busy_until if b > t_ms)
 
     def step(self, now_ms: int, calls) -> None:
         end = now_ms + STEP_MS
+        if not self.up:  # reads stall: nothing is answered, so callers time out
+            self.pool_used = 0.0
+            return
         arrivals = deque(sorted(calls, key=lambda c: c.start_ms))  # sorted() is stable: arrival order
         while True:
             head_t = start_t = expire_t = math.inf

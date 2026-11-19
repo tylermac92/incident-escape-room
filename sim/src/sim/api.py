@@ -70,6 +70,20 @@ class Api:
     def status(self) -> str:
         return "Up" if self.up else "Restarting"
 
+    def go_down(self, now_ms: int) -> None:
+        """A restart begins (SCN-08): in-flight requests fail, and so does every new one until come_up."""
+        self.up = False
+        for call, (flow, started) in self._in_flight.items():
+            call.abandoned = True
+            self.responses.append(Response(flow, started, now_ms, "unavailable"))
+        for _, _, flow, started, _ in self._pending:
+            self.responses.append(Response(flow, started, now_ms, "unavailable"))
+        self._in_flight.clear()
+        self._pending.clear()
+
+    def come_up(self, now_ms: int) -> None:
+        self.up = True
+
     def step(self, now_ms: int, arrivals: dict[str, int]) -> None:
         # shortcut: ledger runs after api in a step, so a timeout or ledger answer is noticed at the
         # next step boundary and a retry starts up to 100 ms late; the recorded times stay exact.
