@@ -395,9 +395,23 @@ class Game:
         except ApiError as e:
             if e.code != "sim_unavailable":  # the link may be back on a retry
                 self._requests[request["client_request_id"]] = e
+            if rnd is self.session.current_round and self._tick is not None:
+                self.actions.append(self._new_action(request, None, "rejected") | {"reject_reason": e.code})
             raise
         self._requests[request["client_request_id"]] = response
         return response
+
+    def _new_action(self, request: dict, cost: int | None, status: str) -> dict:
+        t_ms = self._tick["sim_time_ms"]
+        delay_ms = catalog.CATALOG[request["type"]]["delay_s"] * 1000
+        return {"id": f"a_{len(self.actions) + 1:04d}", "client_request_id": request["client_request_id"],
+                "type": request["type"], "target": request.get("target"), "params": request.get("params") or {},
+                "cost": cost, "status": status, "reject_reason": None, "submitted_at_ms": t_ms,
+                "effective_at_ms": t_ms + delay_ms, "effect_class": None}
+
+    def public_action(self, rnd: Round, action: dict) -> dict:
+        """effect_class is revealed only in the debrief (QA-07)."""
+        return action if rnd.state == "DEBRIEF" else {k: v for k, v in action.items() if k != "effect_class"}
 
     async def _accept(self, rnd: Round, request: dict) -> dict:
         kind, target, params = request["type"], request.get("target"), request.get("params") or {}
@@ -422,11 +436,8 @@ class Game:
                    "set_retry_policy": lambda: config["retry_policy"][target] == params["mode"]}.get(kind)
         if current and current():
             raise ApiError(409, "no_change", "That is already the current setting.")
-        t_ms = self._tick["sim_time_ms"]
-        action = {"id": f"a_{len(self.actions) + 1:04d}", "client_request_id": request["client_request_id"],
-                  "type": kind, "target": target, "params": params, "cost": cost, "status": "pending",
-                  "reject_reason": None, "submitted_at_ms": t_ms,
-                  "effective_at_ms": t_ms + catalog.CATALOG[kind]["delay_s"] * 1000}
+        action = self._new_action(request, cost, "pending")
+        action["effect_class"] = catalog.effect_class(self.link.effect_matrices[rnd.scenario_id], kind, target, params)
         try:
             applied = await self.link.action({"action_id": action["id"], "type": kind, "target": target, "params": params})
         except LinkDown:
@@ -436,19 +447,30 @@ class Game:
         self.actions.append(action)
         self._log("action", id=action["id"], type=kind, target=target, status="pending")
         self.save()
-        return {"action": action, "budget_remaining": rnd.budget_remaining,
+        return {"action": self.public_action(rnd, action), "budget_remaining": rnd.budget_remaining,
                 "sandbox_target": catalog.sandbox_target(target)}
 
     def _applied(self, action: dict, future) -> None:
-        """evt.action_applied arrived (pending -> completed)."""
-        if future.cancelled() or action["status"] != "pending" or action not in self.actions:
+        """evt.action_applied arrived (pending -> completed), or the link dropped first (refunded)."""
+        if action["status"] != "pending" or action not in self.actions:
+            return
+        if future.cancelled():
+            self._refund(action)
             return
         action["status"], action["effective_at_ms"] = "completed", future.result()
-        self._log("action", id=action["id"], type=action["type"], target=action["target"], status="completed")
+        self._log("action", action["effective_at_ms"], id=action["id"], type=action["type"], target=action["target"],
+                  status="completed")
 
-    def _log(self, kind: str, **payload) -> None:
-        """Append to the current round's event log: seq strictly increasing, stamped with sim time."""
-        t_ms = self._tick["sim_time_ms"] if self._tick else 0
+    def _refund(self, action: dict) -> None:
+        """sim never applied it: give the cost back (§10.3). The round is aborted by the link.down (CTL-20)."""
+        action["status"] = "refunded"
+        self.session.current_round.budget_remaining += action["cost"]
+        self._log("action", id=action["id"], type=action["type"], target=action["target"], status="refunded")
+
+    def _log(self, kind: str, t_ms: int | None = None, **payload) -> None:
+        """Append to the current round's event log: seq strictly increasing, stamped with sim time
+        (the latest tick's, unless sim reported the event's own time)."""
+        t_ms = t_ms if t_ms is not None else self._tick["sim_time_ms"] if self._tick else 0
         self.events.append({"seq": len(self.events) + 1, "sim_time_ms": t_ms, "kind": kind, "payload": payload})
 
     def _move(self, rnd: Round, to: str, abort_reason: str | None = None) -> None:
@@ -464,6 +486,9 @@ class Game:
     async def _abort(self, rnd: Round, reason: str) -> None:
         self._stop_runner()
         self._move(rnd, "ABORTED", reason)
+        for action in self.actions:
+            if action["status"] == "pending":
+                self._refund(action)
         self._unpause(rnd)
         self.save()
         await self._stop_sim()
@@ -487,5 +512,6 @@ class Game:
             "alerts": list(self._alerts.alerts.values()) if live else [],
             "impact": self.impact.counters() if live else None,
             "feed": self.feed.items if live else [],
+            "actions": [self.public_action(rnd, a) for a in self.actions] if live else [],
             "statuses": {name: s["status"] for name, s in self._tick["services"].items()} if live else {},
         }

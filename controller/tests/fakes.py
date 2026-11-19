@@ -12,6 +12,12 @@ CONFIG = {"budget": 12, "round_time_limit_s": 720, "stability_window_s": 60, "fe
                            "set_retry_policy": 1, "quarantine_head_message": 1, "purge_queue": 4},
           "alerts": {"api_error_rate_pct": 5, "api_latency_p95_ms": 1000, "orders_backlog": 500, "for_s": 30}}
 ONSET_MS = 700_000
+# Every §10.2 row; a test may override one. The same matrix for every scenario.
+MATRIX = dict.fromkeys(["restart_service(api)", "restart_service(worker)", "restart_service(ledger)", "restart_all",
+                        "recycle_pool(ledger)", "set_feature_flag(receipt_export, off)",
+                        "set_feature_flag(receipt_export, on)", "set_feature_flag(checkout_banner, *)",
+                        "set_retry_policy(api, backoff)", "set_retry_policy(worker, backoff)",
+                        "set_retry_policy(*, aggressive)", "quarantine_head_message(jobs)", "purge_queue(jobs)"], "no_effect")
 WEIGHTS = {"read_failed": 1, "read_slow": 1, "receipt_unavailable": 1, "order_rejected": 1, "order_delayed": 1,
            "order_lost": 3}
 
@@ -39,6 +45,7 @@ class FakeSim:
 
     def __init__(self, script, bad=lambda t: {}, manual=False):
         self.script, self.bad, self.config, self.sent, self.manual = script, bad, CONFIG, [], manual
+        self.effect_matrices = {sid: dict(MATRIX) for sid in ("pool_leak", "poison_message", "retry_storm")}
         self.events, self.t_ms, self.on_step, self._play = asyncio.Queue(), 0, None, None
         self.sim_config = {"flags": {"receipt_export": True, "checkout_banner": True},
                            "retry_policy": {"api": "backoff", "worker": "backoff"}}

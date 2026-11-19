@@ -66,5 +66,18 @@ def needs_up(kind: str, target) -> tuple:
             "set_retry_policy": (target,)}.get(kind, ())
 
 
+def effect_class(matrix: dict, kind: str, target, params: dict) -> str:
+    """This action's row in the scenario's effect matrix (§10.2): exact, then `*` for the value or the target."""
+    value = {"set_feature_flag": lambda: "on" if params["enabled"] else "off",
+             "set_retry_policy": lambda: params["mode"]}.get(kind)
+    if kind == "restart_all":
+        keys = ["restart_all"]
+    elif value is None:
+        keys = [f"{kind}({target})"]
+    else:
+        keys = [f"{kind}({target}, {value()})", f"{kind}({target}, *)", f"{kind}(*, {value()})"]
+    return next(matrix[k] for k in keys if k in matrix)  # the pack loader requires every row (SCN-01)
+
+
 def sandbox_target(target) -> str:
     return f"sim/{target}" if target else "sim"
