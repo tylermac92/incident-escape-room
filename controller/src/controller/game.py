@@ -24,6 +24,7 @@ from pathlib import Path
 
 from controller.alerts import Alerts
 from controller.errors import ApiError
+from controller.health import Health
 from controller.link import HEARTBEAT_TIMEOUT_S, LinkDown
 
 SCENARIO_IDS = ("pool_leak", "poison_message", "retry_storm")  # the closed set sim also enforces
@@ -136,6 +137,8 @@ class Game:
         self._tick: dict | None = None  # the current round's latest evt.tick (hidden fields included)
         self._alerts: Alerts | None = None
         self.events: list[dict] = []  # the current round's RoundEvent log (CTL-07, §6.3)
+        self._health: Health | None = None
+        self.checks: list[dict] = []  # the latest health-check results (CTL-08)
 
     def save(self) -> None:
         if self.session is None:
@@ -243,6 +246,7 @@ class Game:
         self.save()
         self._stop_runner()
         self._tick, self._alerts, self.events = None, Alerts(config["alerts"]), []
+        self._health, self.checks = Health(), []
         self._log("state_change", **{"from": None, "to": rnd.state})
         self._task = asyncio.get_running_loop().create_task(self._run(rnd, retry))
         return rnd
@@ -298,8 +302,10 @@ class Game:
         if self.locked():
             return "isolation_check_failed"
         # §6.3 order: health checks (CTL-08), alerts, impact (CTL-10), feed (CTL-11), state, broadcast (CTL-18).
-        self._tick, fault = event, event["hidden"]["fault"]
+        self._tick, fault, t_ms = event, event["hidden"]["fault"], event["sim_time_ms"]
         rnd.t_onset_ms = fault["onset_ms"]
+        since_t0 = None if rnd.t0_ms is None else (t_ms - rnd.t0_ms) // 1000 + 1
+        self.checks = self._health.evaluate(event["services"], since_t0)
         self._alerts.evaluate(event["services"], event["sim_time_ms"], armed=fault["active"])
         return None
 
@@ -371,7 +377,7 @@ class Game:
         elapsed_s = (t_ms - rnd.t0_ms) / 1000 if live and rnd.t0_ms is not None else 0
         return out | {
             "t_ms": t_ms, "timer_remaining_s": max(0, rnd.time_limit_s - elapsed_s),  # from T0 only (§6.2)
-            "health_checks": [],  # CTL-08
+            "health_checks": self.checks if live else [],
             "alerts": list(self._alerts.alerts.values()) if live else [],
             "statuses": {name: s["status"] for name, s in self._tick["services"].items()} if live else {},
         }
