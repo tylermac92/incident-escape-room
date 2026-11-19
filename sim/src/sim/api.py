@@ -61,6 +61,10 @@ class Api:
         self._pending: list[tuple[int, int, str, int, int]] = []  # (ready, seq, flow, request start, attempt)
         self._seq = itertools.count()
 
+    @property
+    def status(self) -> str:
+        return "Up" if self.up else "Restarting"
+
     def step(self, now_ms: int, arrivals: dict[str, int]) -> None:
         # shortcut: ledger runs after api in a step, so a timeout or ledger answer is noticed at the
         # next step boundary and a retry starts up to 100 ms late; the recorded times stay exact.

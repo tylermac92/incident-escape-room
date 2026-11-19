@@ -31,14 +31,20 @@ class Ledger:
         self.busy_until = [0.0] * POOL_SIZE  # per ledger.db connection; math.inf for a leaked lease
         self.busy_ms = 0.0  # total connection hold time, for utilization
         self.completed: list = []  # calls finished this step (any reason), drained by metrics
+        self.peak_in_use = 0  # most connections leased at once this step, for pool_in_use
         self._running: list = []  # (done ms, seq, call)
         self._seq = 0
+
+    @property
+    def status(self) -> str:
+        return "Up"  # shortcut: no downtime until restart actions (SCN-08) add Restarting
 
     def in_use(self, t_ms: float) -> int:
         return sum(1 for b in self.busy_until if b > t_ms)
 
     def step(self, now_ms: int, calls) -> None:
         end = now_ms + STEP_MS
+        self.peak_in_use = self.in_use(now_ms)
         arrivals = deque(sorted(calls, key=lambda c: c.start_ms))  # sorted() is stable: arrival order
         while True:
             head_t = start_t = expire_t = math.inf
@@ -72,6 +78,7 @@ class Ledger:
         i = self.busy_until.index(min(self.busy_until))
         self.busy_until[i] = t + hold
         self.busy_ms += hold
+        self.peak_in_use = max(self.peak_in_use, self.in_use(t))
         call.done_ms = math.ceil(t + hold)
         call.reason = "timeout" if call.done_ms > call.deadline_ms else None
         self._seq += 1
