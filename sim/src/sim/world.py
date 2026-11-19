@@ -30,6 +30,7 @@ ACTIONS = {
     "purge_queue": (3000, {"jobs"}),
 }
 SLOWDOWN_FACTOR = 8  # ledger_slowdown injection (D-10): the retry_storm maintenance multiplier
+YESTERDAY_MS = -20 * 3600 * 1000  # "api v2.3 deployed (yesterday)": before the round began
 
 
 class World:
@@ -58,6 +59,16 @@ class World:
             "bad_events": self._record,
         }, on_action=lambda e, apply: apply())
         self.injector = Injector(self, pack.scenarios[scenario_id], rng["fault"])
+        self.recent_changes = self._recent_changes(pack, pack.scenarios[scenario_id], rng["fault"])
+
+    def _recent_changes(self, pack, scenario, rng) -> list[dict]:
+        """SCN-07: the scenario's relevant change at onset, plus 2-3 seeded decoys (§9.4)."""
+        onset = self.injector.onset_ms
+        entries = [{"t_ms": onset, "text": scenario["recent_change"]}]
+        for decoy in rng.sample(pack.decoy_changes, rng.choice((2, 3))):
+            t = YESTERDAY_MS if decoy.get("yesterday") else round(rng.uniform(60_000, onset - 60_000))
+            entries.append({"t_ms": t, "text": decoy["text"]})
+        return sorted(entries, key=lambda c: c["t_ms"])
 
     def _traffic(self, e):
         self._arrivals = self.traffic.arrivals(e.now_ms)
@@ -88,6 +99,7 @@ class World:
             "type": "evt.tick", "sim_time_ms": t_ms,
             "services": self.metrics.tick(self.api, self.ledger, self.worker, self.jobs),
             "bad_events": {"counts": self.bad.take(), "weights": WEIGHTS},
+            "recent_changes": [c for c in self.recent_changes if c["t_ms"] <= t_ms],  # never a future one
             "config": {
                 "flags": dict(self.flags),
                 "retry_policy": {"api": self.api.policy, "worker": self.worker.policy},
