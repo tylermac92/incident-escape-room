@@ -135,6 +135,7 @@ class Game:
         self._task: asyncio.Task | None = None  # the current round's runner
         self._tick: dict | None = None  # the current round's latest evt.tick (hidden fields included)
         self._alerts: Alerts | None = None
+        self.events: list[dict] = []  # the current round's RoundEvent log (CTL-07, §6.3)
 
     def save(self) -> None:
         if self.session is None:
@@ -241,7 +242,8 @@ class Game:
         session.rounds.append(rnd)
         self.save()
         self._stop_runner()
-        self._tick, self._alerts = None, Alerts(config["alerts"])
+        self._tick, self._alerts, self.events = None, Alerts(config["alerts"]), []
+        self._log("state_change", **{"from": None, "to": rnd.state})
         self._task = asyncio.get_running_loop().create_task(self._run(rnd, retry))
         return rnd
 
@@ -276,7 +278,7 @@ class Game:
                     return reason
                 if self._alerts.page is not None:
                     rnd.t0_ms = t_ms
-                    rnd.move("BRIEFING")
+                    self._move(rnd, "BRIEFING")
                     self.save()
                     return None
                 if t_ms > rnd.t_onset_ms + PREROLL_LIMIT_MS:
@@ -306,7 +308,7 @@ class Game:
         if self.locked():
             raise ApiError(423, "locked", "A safety check failed, so the game is locked.")
         await self._send({"type": "cmd.resume"})
-        rnd.move("ACTIVE")
+        self._move(rnd, "ACTIVE")
         rnd.on_call_at = utc_now()
         self.save()
         return rnd
@@ -314,7 +316,7 @@ class Game:
     async def pause(self, round_id: str) -> Round:
         rnd = self._current(round_id, ("ACTIVE",))
         await self._send({"type": "cmd.pause"})
-        rnd.move("PAUSED")
+        self._move(rnd, "PAUSED")
         self._paused_at = time.monotonic()
         self.save()
         return rnd
@@ -322,7 +324,7 @@ class Game:
     async def resume(self, round_id: str) -> Round:
         rnd = self._current(round_id, ("PAUSED",))
         await self._send({"type": "cmd.resume"})
-        rnd.move("ACTIVE")
+        self._move(rnd, "ACTIVE")
         self._unpause(rnd)
         self.save()
         return rnd
@@ -335,6 +337,16 @@ class Game:
             await self._abort(rnd, "player_restart")
         return self._begin(rnd.scenario_id, rnd.attempt + 1)
 
+    def _log(self, kind: str, **payload) -> None:
+        """Append to the current round's event log: seq strictly increasing, stamped with sim time."""
+        t_ms = self._tick["sim_time_ms"] if self._tick else 0
+        self.events.append({"seq": len(self.events) + 1, "sim_time_ms": t_ms, "kind": kind, "payload": payload})
+
+    def _move(self, rnd: Round, to: str, abort_reason: str | None = None) -> None:
+        old = rnd.state
+        rnd.move(to, abort_reason)
+        self._log("state_change", **{"from": old, "to": to}, **({"abort_reason": abort_reason} if abort_reason else {}))
+
     def _unpause(self, rnd: Round) -> None:
         if self._paused_at is not None:
             rnd.paused_s += time.monotonic() - self._paused_at
@@ -342,7 +354,7 @@ class Game:
 
     async def _abort(self, rnd: Round, reason: str) -> None:
         self._stop_runner()
-        rnd.move("ABORTED", reason)
+        self._move(rnd, "ABORTED", reason)
         self._unpause(rnd)
         self.save()
         try:

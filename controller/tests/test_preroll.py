@@ -149,3 +149,11 @@ def test_late_ticks_from_a_stopped_round_are_skipped(tmp_path):
              "hidden": {"fault": {"active": True, "onset_ms": 0}}}
     link.on_step = lambda sim: sim.t_ms == 1000 and sim.events.put_nowait(stale)
     assert run(link, tmp_path).session.current_round.t0_ms == 730_000
+
+
+def test_round_event_log(tmp_path):
+    """CTL-07: every event has a strictly increasing seq and a sim time."""
+    game = run(FakeSim(after_onset(error_pct=10)), tmp_path)
+    assert [(e["seq"], e["sim_time_ms"], e["kind"], e["payload"]) for e in game.events] == [
+        (1, 0, "state_change", {"from": None, "to": "PREPARING"}),
+        (2, 730_000, "state_change", {"from": "PREPARING", "to": "BRIEFING"})]
