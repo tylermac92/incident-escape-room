@@ -9,22 +9,26 @@ import asyncio
 import http
 import json
 import os
+import sys
+from pathlib import Path
 
 import isolation
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosed
 
 from sim.engine import PLAY_STEPS_PER_S, play
-from sim.world import ACTIONS, SCENARIOS, World
+from sim.scenarios import SCENARIO_IDS, PackError, load_pack
+from sim.world import ACTIONS, World
 
 PORT = 9000
 CHECK_INTERVAL_S = 60
 HEARTBEAT_INTERVAL_S = 1
 MAX_STEPS = 600  # per cmd.step: about 40 ms of work, so heartbeats keep flowing
 PLAY_RATE = PLAY_STEPS_PER_S
+SCENARIO_DIR = Path("/app/scenarios")  # baked into the image (TDD §4.3)
 
 # Fail closed until the startup check has run.
-state = {"isolation": {"status": "fail", "failed": ["not_run"]}}
+state = {"isolation": {"status": "fail", "failed": ["not_run"]}, "pack": None}
 
 
 def healthy() -> bool:
@@ -94,7 +98,7 @@ class Session:
         return self.world
 
     def start_round(self, cmd):
-        scenario_id = field(cmd, "scenario_id", str, SCENARIOS)
+        scenario_id = field(cmd, "scenario_id", str, SCENARIO_IDS)
         seed = field(cmd, "seed", int)
         self.stop()
         self.world, self.phase = World(scenario_id, seed, self.emit), "preroll"
@@ -165,7 +169,8 @@ async def link(ws: ServerConnection) -> None:
 
     async def heartbeats():
         while True:
-            out.put_nowait({"type": "evt.heartbeat", "isolation": state["isolation"]})
+            out.put_nowait({"type": "evt.heartbeat", "isolation": state["isolation"],
+                            "pack_version": state["pack"] and state["pack"].version})
             if not healthy():
                 return
             await asyncio.sleep(HEARTBEAT_INTERVAL_S)
@@ -203,6 +208,11 @@ def server(port: int = PORT):
 
 
 async def main() -> None:
+    try:
+        state["pack"] = load_pack(SCENARIO_DIR)
+    except PackError as e:  # never serve with a broken pack: /healthz stays down and the log names the field
+        sys.exit(f"sim: invalid scenario pack: {e}")
+    print(f"sim: scenario pack {state['pack'].version}", flush=True)
     state["isolation"] = isolation.run()
     print(f"sim: isolation {state['isolation']}", flush=True)
     async with server():

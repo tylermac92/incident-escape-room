@@ -10,6 +10,9 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
 from sim import server
+from sim.scenarios import load_pack
+
+PACK = load_pack(server.Path(__file__).parents[1] / "scenarios")
 
 PASS = {"status": "pass", "failed": []}
 FAIL = {"status": "fail", "failed": ["route"]}
@@ -24,7 +27,7 @@ def get(port, path):
 
 
 async def scenario(result, check):
-    server.state["isolation"] = result
+    server.state["isolation"], server.state["pack"] = result, PACK
     async with server.server(port=0) as srv:
         port = srv.sockets[0].getsockname()[1]
         return await check(port)
@@ -54,7 +57,7 @@ def test_link_sends_heartbeats_when_healthy():
         async with connect(f"ws://127.0.0.1:{port}/link") as ws:
             return json.loads(await asyncio.wait_for(ws.recv(), 2))
 
-    assert run(PASS, check) == {"type": "evt.heartbeat", "isolation": PASS}
+    assert run(PASS, check) == {"type": "evt.heartbeat", "isolation": PASS, "pack_version": PACK.version}
 
 
 def test_link_reports_a_failing_check_then_closes():
@@ -67,7 +70,7 @@ def test_link_reports_a_failing_check_then_closes():
                 await asyncio.wait_for(ws.recv(), 3)
             return last, closed.value.rcvd.code
 
-    assert run(PASS, check) == ({"type": "evt.heartbeat", "isolation": FAIL}, 1011)
+    assert run(PASS, check) == ({"type": "evt.heartbeat", "isolation": FAIL, "pack_version": PACK.version}, 1011)
 
 
 def test_link_reports_failure_at_connect_then_closes():
@@ -78,7 +81,7 @@ def test_link_reports_failure_at_connect_then_closes():
                 await asyncio.wait_for(ws.recv(), 2)
             return first, closed.value.rcvd.code
 
-    assert run(FAIL, check) == ({"type": "evt.heartbeat", "isolation": FAIL}, 1011)
+    assert run(FAIL, check) == ({"type": "evt.heartbeat", "isolation": FAIL, "pack_version": PACK.version}, 1011)
 
 
 def test_link_carries_commands_and_events():

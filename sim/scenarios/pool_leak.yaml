@@ -1,0 +1,52 @@
+# TDD §7.3. Times in the TDD are relative to the alert (T0); onset here is sim time from round start.
+id: pool_leak
+title: Connection-pool leak in ledger
+parameters:
+  onset_s: 750  # ±20% seeded jitter (SCN-03)
+  overrides:
+    flags: {receipt_export: false}  # enabled at onset; that is the change that starts the leak
+fault_script:
+  kind: export_leak
+  leak_probability: 0.0125  # per export: about one leaked connection every 40 s at 2 exports/s
+recent_change: receipt_export enabled for all customers
+
+signature:
+  page: api_latency_high
+  leading_signal: {signal: ledger.pool_used, direction: up, floor: 1}
+  # Checked on the player-visible tick at T0+60 s (QA-02). `text` is the §7.2 cell.
+  cells:
+    - {signal: ledger.pool_used, op: ">=", value: 10, text: "ledger.db pool climbs in steps to 10/10"}
+    - {signal: ledger.throughput_rps, op: "<=", value: 15, text: "ledger throughput falls toward 0"}
+    - {signal: ledger.retry_share, op: "<=", value: 0.35, text: "retry share at most 35%"}
+    - {signal: ledger.main_error, op: "==", value: pool_timeout, text: "ledger errors are pool_timeout"}
+    - {signal: worker.status, op: "==", value: Up, text: "worker is Up"}
+    - {signal: worker.main_error, op: "==", value: downstream_timeout, text: "worker errors are downstream_timeout"}
+    - {signal: jobs.head_attempts, op: "<=", value: 2, text: "head delivery attempts stay low"}
+
+effect_matrix:
+  restart_service(api): no_effect
+  restart_service(worker): no_effect
+  restart_service(ledger): mitigates
+  restart_all: restores
+  recycle_pool(ledger): partial_fix
+  set_feature_flag(receipt_export, off): partial_fix
+  set_feature_flag(receipt_export, on): unhelpful
+  set_feature_flag(checkout_banner, *): no_effect
+  set_retry_policy(api, backoff): no_change
+  set_retry_policy(worker, backoff): no_change
+  set_retry_policy(*, aggressive): unhelpful
+  quarantine_head_message(jobs): unhelpful
+  purge_queue(jobs): unhelpful
+
+debrief_copy:
+  explanation: >-
+    Turning on receipt exports exposed a bug: about one export in 80 hit an internal time limit and
+    never gave its ledger database connection back. The pool of 10 connections shrank one at a time
+    until none were left, so ledger requests waited 2 seconds and failed, and api and worker failed with them.
+  clues:
+    - ledger.db pool use climbed in steps and did not fall when traffic dipped.
+    - The climb began shortly after receipt_export was enabled.
+    - ledger throughput fell instead of spiking, so this was not overload.
+  takeaway: When a pool fills up, check whether usage falls when traffic falls. If it doesn't, something is holding on to connections.
+  held: Yes. receipt_export is off and every stuck connection was reclaimed, so the pool will stay healthy.
+  not_held: No. Service recovered, but the pool would have run out again within minutes, because receipt_export was still on or stuck connections remained.

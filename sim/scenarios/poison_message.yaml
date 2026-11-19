@@ -1,0 +1,51 @@
+# TDD §7.4.
+id: poison_message
+title: Poisoned queue message
+parameters:
+  onset_s: 750  # ±20% seeded jitter (SCN-03)
+fault_script:
+  kind: poison_batch
+  batch_size: 200  # partner-import orders; the first one is missing its currency
+recent_change: partner-import batch started (200 orders)
+
+signature:
+  page: orders_backlog_high
+  leading_signal: {signal: worker.completed_rps, direction: down, floor: 2}
+  cells:
+    - {signal: worker.status, op: "==", value: Crash-looping, text: "worker is Crash-looping"}
+    - {signal: worker.main_error, op: "==", value: crash, text: "worker errors are crash"}
+    - {signal: worker.completed_rps, op: "<=", value: 0, text: "worker completes nothing"}
+    - {signal: jobs.head_attempts, op: ">=", value: 10, text: "head delivery attempts climb by 1 every 5 s"}
+    - {signal: ledger.pool_used, op: "<=", value: 6, text: "ledger.db pool normal"}
+    - {signal: ledger.retry_share, op: "<=", value: 0.05, text: "ledger retry share about 0%"}
+    - {signal: ledger.queue, op: "<=", value: 5, text: "ledger.requests about 0"}
+    - {signal: ledger.main_error, op: "==", value: none, text: "ledger has no errors"}
+    - {signal: api.error_rate_pct, op: "<=", value: 1, text: "api normal"}
+
+effect_matrix:
+  restart_service(api): no_effect
+  restart_service(worker): no_effect
+  restart_service(ledger): no_effect
+  restart_all: restores
+  recycle_pool(ledger): no_effect
+  set_feature_flag(receipt_export, off): no_effect
+  set_feature_flag(receipt_export, on): no_effect
+  set_feature_flag(checkout_banner, *): no_effect
+  set_retry_policy(api, backoff): no_change
+  set_retry_policy(worker, backoff): no_change
+  set_retry_policy(*, aggressive): unhelpful
+  quarantine_head_message(jobs): fix
+  purge_queue(jobs): fix
+
+debrief_copy:
+  explanation: >-
+    A partner-import batch added 200 orders, and one of them was missing its currency. Each time worker
+    picked it up, the consumer crashed before acknowledging it, so jobs handed the same message back first
+    and the cycle repeated every 5 seconds while orders piled up behind it.
+  clues:
+    - worker was crash-looping with crash errors while ledger, its dependency, stayed healthy.
+    - The head message's delivery attempts went up by one every 5 seconds.
+    - It started exactly when the partner-import batch began.
+  takeaway: When a consumer crashes on the same message again and again, look at that message before adding capacity or restarting.
+  held: Yes. The malformed message is no longer in jobs, so worker can't crash on it again.
+  not_held: No. The malformed message was still in jobs, so worker would keep crashing on it.

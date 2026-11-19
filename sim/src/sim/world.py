@@ -17,7 +17,6 @@ from sim.rng import streams
 from sim.traffic import Traffic
 from sim.worker import Worker
 
-SCENARIOS = ("pool_leak", "poison_message", "retry_storm")
 STEPS_PER_TICK = 1000 // STEP_MS
 # §10.1: the delay (ms) before each action's effect completes, and its targets (closed sets, SR-7).
 ACTIONS = {

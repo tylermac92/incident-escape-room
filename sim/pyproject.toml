@@ -5,6 +5,7 @@ description = "Incident Escape Room simulation engine (runs only inside the sand
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "escape-isolation",
+    "pyyaml>=6.0.2",
     "websockets>=17.4",
 ]
 
