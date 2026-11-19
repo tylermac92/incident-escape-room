@@ -9,7 +9,7 @@ world:
     amplitude: 0.10  # sine, 120 s period
     noise: 0.05  # per-second uniform noise
   ledger:
-    pool_size: 10
+    pool_size: 13  # D-24: with 10, even backoff could not pull ledger out of overload after a fix
     hold_mean_ms: {read: 80, write: 120, receipt_export: 300}
   worker:
     restart_backoff_ms: 5000

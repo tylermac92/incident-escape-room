@@ -18,7 +18,7 @@ def test_baseline_world_and_scenario_overrides():
         "flags": {"receipt_export": True, "checkout_banner": True},
         "retry_policy": {"api": "backoff", "worker": "backoff"},
         "timeout_ms": {"api.ledger_client": 1000, "worker.ledger_client": 2000, "ledger.db": 2000},
-        "pool_size": {"api.ledger_client": 50, "worker.ledger_client": 10, "ledger.db": 10},
+        "pool_size": {"api.ledger_client": 50, "worker.ledger_client": 10, "ledger.db": 13},
         "queue_cap": {"ledger.requests": 300},
     }
     assert config("retry_storm") == {**base, "retry_policy": {"api": "aggressive", "worker": "backoff"}}

@@ -15,7 +15,7 @@ signature:
   page: [api_error_rate_high, api_latency_high]  # both start within a second of each other (D-22)
   leading_signal: {signal: ledger.retry_share, direction: up, floor: 0.05}
   cells:
-    - {signal: ledger.pool_used, op: ">=", value: 10, text: "ledger.db pool pinned at 10/10"}
+    - {signal: ledger.pool_used, op: ">=", value: 13, text: "ledger.db pool pinned at 13/13"}
     - {signal: ledger.throughput_rps, op: ">=", value: 80, text: "ledger at capacity, far above api input"}
     - {signal: ledger.retry_share, op: ">=", value: 0.6, text: "retry share above 60%"}
     - {signal: ledger.queue, op: ">=", value: 150, text: "ledger.requests near the cap of 300"}
@@ -23,7 +23,9 @@ signature:
     # Over every api request; orders, a quarter of traffic, still get their 202 (D-23).
     - {signal: api.error_rate_pct, op: ">=", value: 60, text: "api errors at about 75%: nearly every read fails"}
     - {signal: worker.status, op: "==", value: Up, text: "worker is Up"}
-    - {signal: worker.main_error, op: "==", value: downstream_timeout, text: "worker errors are downstream_timeout"}
+    # Some writes get through, so a 10 s window can hold no worker errors at all (D-23).
+    - {signal: worker.completed_rps, op: "<=", value: 6, text: "worker writes mostly fail (downstream_timeout)"}
+    - {signal: jobs.depth, op: ">=", value: 300, text: "jobs growing"}
     - {signal: jobs.head_attempts, op: "<=", value: 2, text: "head delivery attempts stay low"}
 
 effect_matrix:

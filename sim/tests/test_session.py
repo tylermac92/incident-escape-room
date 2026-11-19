@@ -64,6 +64,12 @@ def test_same_seed_same_ticks():
      "invalid_request"),
     ('{"type": "cmd.action", "action": {"action_id": "a1", "type": "rm_rf", "target": "api"}}', "invalid_request"),
     ('{"type": "cmd.action", "action_id": "a1", "type": "restart_service"}', "unknown_command"),
+    ('{"type": "cmd.action", "action": {"action_id": "a1", "type": "set_retry_policy", "target": "api", '
+     '"params": {"mode": "yolo"}}}', "invalid_request"),
+    ('{"type": "cmd.action", "action": {"action_id": "a1", "type": "set_feature_flag", "target": "receipt_export", '
+     '"params": {"enabled": "no"}}}', "invalid_request"),
+    ('{"type": "cmd.action", "action": {"action_id": "a1", "type": "restart_all", "params": {"force": true}}}',
+     "invalid_request"),
 ])
 def test_bad_commands_get_evt_error_and_change_nothing(raw, code):
     s, events = session()

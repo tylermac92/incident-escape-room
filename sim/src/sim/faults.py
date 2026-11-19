@@ -74,7 +74,8 @@ class ExportLeak(Fault):
     def onset(self, t, now_ms):
         t.set_flag("receipt_export", True)  # the change that starts it
         p = self.script["leak_probability"]
-        t.leak_leases(lambda call: call.kind == "receipt_export" and self.rng.random() < p)
+        # The flag gates the buggy code path: exports still queued or retried after it goes off don't leak.
+        t.leak_leases(lambda call: call.kind == "receipt_export" and t.flag("receipt_export") and self.rng.random() < p)
 
     def neutralized(self, t):
         return not t.flag("receipt_export") and t.leaked_leases() == 0

@@ -25,6 +25,9 @@ CHECK_INTERVAL_S = 60
 HEARTBEAT_INTERVAL_S = 1
 MAX_STEPS = 600  # per cmd.step: about 40 ms of work, so heartbeats keep flowing
 PLAY_RATE = PLAY_STEPS_PER_S
+# cmd.action params per action type: (type, allowed values or None). Closed sets (SR-7).
+ACTION_PARAMS = {"set_feature_flag": {"enabled": (bool, None)},
+                 "set_retry_policy": {"mode": (str, ("backoff", "aggressive"))}}
 SCENARIO_DIR = Path("/app/scenarios")  # baked into the image (TDD §4.3)
 
 # Fail closed until the startup check has run.
@@ -139,8 +142,14 @@ class Session:
         field(action, "action_id", str)
         kind = field(action, "type", str, ACTIONS)
         field(action, "target", (str, type(None)), ACTIONS[kind][1])
-        if not isinstance(action.get("params", {}), dict):
+        params = action.setdefault("params", {})
+        if not isinstance(params, dict):
             raise CommandError("invalid_request", "params must be an object")
+        spec = ACTION_PARAMS.get(kind, {})
+        if set(params) != set(spec):
+            raise CommandError("invalid_request", f"params for {kind} must be exactly {sorted(spec)}")
+        for name, (kind_, allowed) in spec.items():
+            field(params, name, kind_, allowed)
         world.submit_action(action)
 
     def stop(self, cmd=None):

@@ -15,7 +15,7 @@ signature:
   leading_signal: {signal: ledger.pool_used, direction: up, floor: 1}
   # Checked on the player-visible tick at T0+60 s (QA-02). `text` is the §7.2 cell.
   cells:
-    - {signal: ledger.pool_used, op: ">=", value: 10, text: "ledger.db pool climbs in steps to 10/10"}
+    - {signal: ledger.pool_used, op: ">=", value: 13, text: "ledger.db pool climbs in steps to 13/13"}
     # Below normal, never a spike; it reaches 0 once every connection has leaked (D-23).
     - {signal: ledger.throughput_rps, op: "<=", value: 50, text: "ledger throughput falls (no spike)"}
     - {signal: ledger.main_error, op: "==", value: pool_timeout, text: "ledger errors are pool_timeout"}

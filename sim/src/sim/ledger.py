@@ -17,7 +17,7 @@ from collections import deque
 from sim.engine import STEP_MS
 
 QUEUE_CAP = 300
-POOL_SIZE = 10
+POOL_SIZE = 13  # D-24 (the TDD's 10 left no margin to recover); the pack sets the round's value
 POOL_WAIT_MS = 2000
 SIGMA = 0.4
 HOLD_MEAN_MS = {"read": 80, "write": 120, "receipt_export": 300}
@@ -56,6 +56,14 @@ class Ledger:
 
     def come_up(self, now_ms: int) -> None:
         self.up = True
+
+    def recycle(self, now_ms: int) -> None:
+        """recycle_pool (SCN-09): close and reopen every connection; queries running on them fail."""
+        for _, _, call in self._running:
+            call.done_ms, call.reason = now_ms, "unavailable"
+            self.completed.append(call)
+        self._running.clear()
+        self.release_all(now_ms)
 
     def release_all(self, t_ms: int) -> None:
         """Every connection is free from t_ms (restart, recycle_pool)."""

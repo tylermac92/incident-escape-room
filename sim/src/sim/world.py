@@ -119,8 +119,14 @@ class World:
             names = [target] if kind == "restart_service" else ["worker", "api", "ledger"]
             self.engine.submit(lambda: self._go_down(names, empty_jobs=kind == "restart_all"))
             effect = lambda: self._come_up(names)  # noqa: E731
+        elif kind == "recycle_pool":
+            effect = lambda: self.ledger.recycle(self.engine.now_ms)  # noqa: E731
+        elif kind == "set_feature_flag":
+            effect = lambda: self.flags.__setitem__(target, action["params"]["enabled"])  # noqa: E731
+        elif kind == "set_retry_policy":  # retries decided after this use the new policy
+            effect = lambda: setattr(self._services([target])[0], "policy", action["params"]["mode"])  # noqa: E731
         else:
-            # shortcut: the other actions only report being applied until SCN-09 and SCN-10.
+            # shortcut: the queue actions only report being applied until SCN-10.
             effect = lambda: None  # noqa: E731
 
         def complete():

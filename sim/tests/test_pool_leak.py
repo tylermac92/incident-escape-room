@@ -28,8 +28,8 @@ def test_the_pool_climbs_in_steps_and_never_gives_connections_back():
         run_s(w, 1)
         leaked.append(w.injector.targets.leaked_leases())
         p95.append(signal(ticks(events)[-1], "ledger.latency_p95_ms"))
-    assert leaked == sorted(leaked) and leaked[-1] >= 6  # steps up, never down, even when traffic dips
-    assert max(p for p, k in zip(p95, leaked) if k <= 4) < 400  # latency holds until about 6 have leaked
+    assert leaked == sorted(leaked) and leaked[-1] >= 8  # steps up, never down, even when traffic dips
+    assert max(p for p, k in zip(p95, leaked) if k <= 5) < 400  # latency holds until most of the pool is gone
 
 
 def test_holds_only_when_the_flag_is_off_and_no_leases_are_leaked():
@@ -39,7 +39,7 @@ def test_holds_only_when_the_flag_is_off_and_no_leases_are_leaked():
     run_s(w, 60)
     last = ticks(events)[-1]
     assert last["hidden"]["fault"]["neutralized"] is False  # leaked connections are still gone...
-    assert signal(last, "ledger.pool_used") == 10 and signal(last, "api.error_rate_pct") > 50  # ...so no recovery
+    assert signal(last, "ledger.pool_used") == 13 and signal(last, "api.error_rate_pct") > 50  # ...so no recovery
     w.ledger.busy_until = [0.0] * w.ledger.pool_size  # what recycle_pool does (SCN-09)
     run_s(w, 1)
     assert ticks(events)[-1]["hidden"]["fault"]["neutralized"] is True

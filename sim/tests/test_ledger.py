@@ -30,7 +30,7 @@ def test_lease_and_release(monkeypatch):
     calls = [call(at=5 * i, timeout=10**6) for i in range(POOL_SIZE + 2)]
     ledger.step(0, calls)
     assert ledger.in_use(99) == POOL_SIZE and len(ledger.queue) == 2  # 10 leased, 2 waiting
-    assert ledger.pool_used == 7.75  # time-weighted: leases start at 0, 5, ... 45 ms into the step
+    assert ledger.pool_used == pytest.approx(sum(100 - 5 * i for i in range(POOL_SIZE)) / 100)  # time-weighted
     done = run(ledger, [], 60)
     assert len(done) == len(calls) and all(c.reason is None for c in done)
     assert ledger.in_use(6000) == 0 and not ledger.queue
@@ -99,18 +99,18 @@ def baseline_calls(seed, minutes, scale=1.0):
     return calls
 
 
-def test_baseline_utilization_is_about_42_percent():
+def test_baseline_utilization_is_about_32_percent():  # 42% with the TDD's 10 connections (D-24)
     ledger = Ledger(stream(2, "latency"))
     done = run(ledger, baseline_calls(2, 10), 10 * 600)
     assert all(c.reason is None for c in done)
-    assert ledger.busy_ms / (POOL_SIZE * 600_000) == pytest.approx(0.42, abs=0.05)
+    assert ledger.busy_ms / (POOL_SIZE * 600_000) == pytest.approx(0.32, abs=0.05)
 
 
-def test_capacity_is_about_100_rps():
+def test_capacity_is_about_130_rps():  # 100 with the TDD's 10 connections (D-24)
     ledger = Ledger(stream(3, "latency"))
     done = run(ledger, baseline_calls(3, 2, scale=4), 2 * 600)  # about 170 rps offered
     served = sum(1 for c in done if c.reason is None and c.done_ms >= 30_000)
-    assert served / 90 == pytest.approx(100, rel=0.1)
+    assert served / 90 == pytest.approx(130, rel=0.1)
 
 
 def test_api_and_ledger_together_at_baseline():

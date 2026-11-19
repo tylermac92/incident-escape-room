@@ -21,7 +21,7 @@ def test_restart_api_fails_every_request_for_8_s():
 
 def test_restart_ledger_stalls_reads_and_reclaims_every_lease():
     w, events, _, _ = run_to_page("pool_leak", 1, after_s=0)
-    assert w.injector.targets.leaked_leases() >= 6
+    assert w.injector.targets.leaked_leases() >= 8
     a = act(w, "restart_service", "ledger")
     run_s(w, 4)
     mid = ticks(events)[-1]
