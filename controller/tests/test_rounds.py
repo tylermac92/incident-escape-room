@@ -57,6 +57,10 @@ class FakeLink:
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
+    async def no_preroll(self, rnd, retry):  # CTL-05's runner has its own tests
+        pass
+
+    monkeypatch.setattr(Game, "_run", no_preroll)
     link, flags = FakeLink(), {"locked": False}
     game = Game(link, lambda: flags["locked"], tmp_path / "session.json")
     monkeypatch.setattr(app_module, "game", game)

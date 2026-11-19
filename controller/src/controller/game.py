@@ -1,10 +1,14 @@
-"""Sessions (CTL-03) and the round lifecycle (CTL-04): TDD §4.6, §6.1, §12.1, §12.2.
+"""Sessions (CTL-03), the round lifecycle (CTL-04) and the pre-roll (CTL-05): TDD §4.6, §6, §12.
 
 A session is three rounds, one per scenario, in a random order. It is mirrored to
 /data/session.json on every change, so a controller restart keeps completed rounds. The round
 order and scenario ids are never sent to the UI before a round's debrief (§9.7).
 
 Every attempt at a scenario is its own Round; restarting aborts the attempt and adds a new one.
+
+Pre-roll (D-05): the controller steps sim one simulated second at a time and runs the per-tick
+pipeline after each tick. In the second a page fires it stops: that second is T0, sim stays paused
+and the round enters BRIEFING. One task per round is the only reader of link.events.
 """
 
 import asyncio
@@ -18,8 +22,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from controller.alerts import Alerts
 from controller.errors import ApiError
-from controller.link import LinkDown
+from controller.link import HEARTBEAT_TIMEOUT_S, LinkDown
 
 SCENARIO_IDS = ("pool_leak", "poison_message", "retry_storm")  # the closed set sim also enforces
 SESSION_FILE = Path("/data/session.json")
@@ -35,6 +40,8 @@ TRANSITIONS = {
     "ENDED": {"DEBRIEF"},
 }
 LIVE = ("PREPARING", "BRIEFING", "ACTIVE", "PAUSED")  # a controller restart aborts these
+PREROLL_LIMIT_MS = 900_000  # no page this long after onset: preroll_no_alert
+STEPS_PER_S = 10
 ABORT_REASONS = ("sim_unavailable", "controller_restart", "isolation_check_failed", "preroll_no_alert", "player_restart")
 
 
@@ -125,6 +132,9 @@ class Game:
         self.session: Session | None = None
         self.lock = asyncio.Lock()  # one lifecycle request at a time
         self._paused_at: float | None = None
+        self._task: asyncio.Task | None = None  # the current round's runner
+        self._tick: dict | None = None  # the current round's latest evt.tick (hidden fields included)
+        self._alerts: Alerts | None = None
 
     def save(self) -> None:
         if self.session is None:
@@ -223,14 +233,73 @@ class Game:
             raise ApiError(409, "invalid_state", f"The current round is still {current.state}.")
         return self._begin(scenario_id, attempt)
 
-    def _begin(self, scenario_id: str, attempt: int) -> Round:
+    def _begin(self, scenario_id: str, attempt: int, retry: bool = True) -> Round:
         session, config = self.session, self.link.config
         rnd = Round(new_id("r"), session.id, scenario_id, secrets.randbelow(2**31), attempt, session.mode,
                     time_limit_s=config["round_time_limit_s"], budget_total=config["budget"],
                     budget_remaining=config["budget"], briefing_opened_at=utc_now())
         session.rounds.append(rnd)
         self.save()
+        self._stop_runner()
+        self._tick, self._alerts = None, Alerts(config["alerts"])
+        self._task = asyncio.get_running_loop().create_task(self._run(rnd, retry))
         return rnd
+
+    def _stop_runner(self) -> None:
+        if self._task is not None and self._task is not asyncio.current_task():
+            self._task.cancel()
+
+    async def _run(self, rnd: Round, retry: bool) -> None:
+        reason = await self._preroll(rnd)
+        while reason is None and rnd.state in LIVE:
+            reason = self._observe(rnd, await self.link.events.get())
+        if reason is not None and rnd.state in LIVE:
+            await self._abort(rnd, reason)
+            if reason == "preroll_no_alert" and retry:  # once, with a new seed (CTL-05)
+                self._begin(rnd.scenario_id, rnd.attempt + 1, retry=False)
+
+    async def _preroll(self, rnd: Round) -> str | None:
+        """Step to the page. Returns an abort reason, or None once the round is in BRIEFING."""
+        self.link.drain()
+        try:
+            await self.link.send({"type": "cmd.start_round", "scenario_id": rnd.scenario_id, "seed": rnd.seed})
+            t_ms = 0
+            while True:
+                await self.link.send({"type": "cmd.step", "n": STEPS_PER_S})
+                t_ms += 1000
+                event = await asyncio.wait_for(self.link.events.get(), HEARTBEAT_TIMEOUT_S)
+                while event["type"] == "evt.tick" and event["sim_time_ms"] != t_ms:  # a stopped round's last ticks
+                    event = await asyncio.wait_for(self.link.events.get(), HEARTBEAT_TIMEOUT_S)
+                if event["type"] != "evt.tick":
+                    return "sim_unavailable"  # evt.error or link.down
+                if (reason := self._observe(rnd, event)) is not None:
+                    return reason
+                if self._alerts.page is not None:
+                    rnd.t0_ms = t_ms
+                    rnd.move("BRIEFING")
+                    self.save()
+                    return None
+                if t_ms > rnd.t_onset_ms + PREROLL_LIMIT_MS:
+                    return "preroll_no_alert"
+        except (LinkDown, TimeoutError):
+            return "sim_unavailable"
+
+    def _observe(self, rnd: Round, event: dict) -> str | None:
+        """One link event for a live round. Returns an abort reason, if it ends the round."""
+        if event["type"] == "link.down":
+            return "sim_unavailable"
+        if event["type"] == "evt.error":
+            if event.get("code") == "internal_error":  # sim dropped its round
+                return "sim_unavailable"
+            print(f"controller: sim refused a command: {event}", flush=True)
+            return None
+        if self.locked():
+            return "isolation_check_failed"
+        # §6.3 order: health checks (CTL-08), alerts, impact (CTL-10), feed (CTL-11), state, broadcast (CTL-18).
+        self._tick, fault = event, event["hidden"]["fault"]
+        rnd.t_onset_ms = fault["onset_ms"]
+        self._alerts.evaluate(event["services"], event["sim_time_ms"], armed=fault["active"])
+        return None
 
     async def start(self, round_id: str) -> Round:
         rnd = self._current(round_id, ("BRIEFING",))
@@ -272,6 +341,7 @@ class Game:
             self._paused_at = None
 
     async def _abort(self, rnd: Round, reason: str) -> None:
+        self._stop_runner()
         rnd.move("ABORTED", reason)
         self._unpause(rnd)
         self.save()
@@ -281,8 +351,15 @@ class Game:
             pass  # sim's round ended with the link
 
     def view(self, rnd: Round) -> dict:
-        """GET /api/rounds/{id}: no seed, and no scenario id before the debrief."""
-        out = {k: v for k, v in dataclasses.asdict(rnd).items() if k not in ("seed", "scenario_id", "session_id")}
-        if rnd.state == "DEBRIEF":
-            out["scenario_id"] = rnd.scenario_id
-        return out | {"timer_remaining_s": rnd.time_limit_s, "health_checks": [], "alerts": [], "statuses": {}}
+        """GET /api/rounds/{id}: never the seed; the scenario and onset only from the debrief (§3.2)."""
+        hidden = ("seed", "session_id") + (() if rnd.state == "DEBRIEF" else ("scenario_id", "t_onset_ms"))
+        out = {k: v for k, v in dataclasses.asdict(rnd).items() if k not in hidden}
+        live = rnd is self.session.current_round and self._tick is not None
+        t_ms = self._tick["sim_time_ms"] if live else None
+        elapsed_s = (t_ms - rnd.t0_ms) / 1000 if live and rnd.t0_ms is not None else 0
+        return out | {
+            "t_ms": t_ms, "timer_remaining_s": max(0, rnd.time_limit_s - elapsed_s),  # from T0 only (§6.2)
+            "health_checks": [],  # CTL-08
+            "alerts": list(self._alerts.alerts.values()) if live else [],
+            "statuses": {name: s["status"] for name, s in self._tick["services"].items()} if live else {},
+        }
