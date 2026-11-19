@@ -12,7 +12,7 @@ fault_script:
 recent_change: ledger index maintenance (20 s window)
 
 signature:
-  page: api_error_rate_high
+  page: [api_error_rate_high, api_latency_high]  # both start within a second of each other (D-22)
   leading_signal: {signal: ledger.retry_share, direction: up, floor: 0.05}
   cells:
     - {signal: ledger.pool_used, op: ">=", value: 10, text: "ledger.db pool pinned at 10/10"}
@@ -20,7 +20,8 @@ signature:
     - {signal: ledger.retry_share, op: ">=", value: 0.6, text: "retry share above 60%"}
     - {signal: ledger.queue, op: ">=", value: 150, text: "ledger.requests near the cap of 300"}
     - {signal: ledger.main_error, op: "==", value: timeout, text: "ledger errors are mainly timeout"}
-    - {signal: api.error_rate_pct, op: ">=", value: 90, text: "api errors at 90% or more"}
+    # Over every api request; orders, a quarter of traffic, still get their 202 (D-23).
+    - {signal: api.error_rate_pct, op: ">=", value: 60, text: "api errors at about 75%: nearly every read fails"}
     - {signal: worker.status, op: "==", value: Up, text: "worker is Up"}
     - {signal: worker.main_error, op: "==", value: downstream_timeout, text: "worker errors are downstream_timeout"}
     - {signal: jobs.head_attempts, op: "<=", value: 2, text: "head delivery attempts stay low"}

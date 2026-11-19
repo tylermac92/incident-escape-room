@@ -9,7 +9,7 @@ fault_script:
 recent_change: partner-import batch started (200 orders)
 
 signature:
-  page: orders_backlog_high
+  page: [orders_backlog_high]
   leading_signal: {signal: worker.completed_rps, direction: down, floor: 2}
   cells:
     - {signal: worker.status, op: "==", value: Crash-looping, text: "worker is Crash-looping"}

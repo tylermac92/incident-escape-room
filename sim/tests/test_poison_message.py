@@ -12,7 +12,7 @@ CELLS = PACK.scenarios["poison_message"]["signature"]["cells"]
 @pytest.mark.parametrize("seed", [1, 2, 3])
 def test_pages_orders_backlog_high_and_shows_its_signature(seed):
     w, events, rule, t0 = run_to_page("poison_message", seed)
-    assert rule == "orders_backlog_high" and ticks(events)[t0]["sim_time_ms"] > w.injector.onset_ms
+    assert [rule] == PACK.scenarios["poison_message"]["signature"]["page"] and ticks(events)[t0]["sim_time_ms"] > w.injector.onset_ms
     assert [c["text"] for c in CELLS if not holds(c, ticks(events)[-1])] == []
 
 

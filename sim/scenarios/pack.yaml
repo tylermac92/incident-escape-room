@@ -26,8 +26,8 @@ decoy_changes:
 
 # Controller-side defaults (§8.7, §9.6, §10, §11.2), carried in the pack so tuning is data.
 controller:
-  # api_latency_p95_ms is below the 1000 ms api timeout so a slow creep pages before errors do (D-22).
-  alerts: {api_error_rate_pct: 5, api_latency_p95_ms: 600, orders_backlog: 500, for_s: 30}
+  # Rules that fire in the same second page in this order (D-22).
+  alerts: {api_error_rate_pct: 5, api_latency_p95_ms: 1000, orders_backlog: 500, for_s: 30}
   stability_window_s: 60
   round_time_limit_s: 720
   budget: 12

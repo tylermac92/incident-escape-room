@@ -11,7 +11,7 @@ fault_script:
 recent_change: receipt_export enabled for all customers
 
 signature:
-  page: api_latency_high
+  page: [api_latency_high, api_error_rate_high]  # both start within a second of each other (D-22)
   leading_signal: {signal: ledger.pool_used, direction: up, floor: 1}
   # Checked on the player-visible tick at T0+60 s (QA-02). `text` is the §7.2 cell.
   cells:

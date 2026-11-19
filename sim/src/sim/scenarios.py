@@ -47,7 +47,8 @@ SCENARIO = {
     "parameters": {"onset_s": NUM, "overrides?": {"retry_policy?": {"api": POLICY}, "flags?": {"receipt_export": bool}}},
     "fault_script": None,  # checked against FAULT_SCRIPTS by its kind
     "recent_change": str,
-    "signature": {"page": PAGE_RULES,
+    # page: the rules that may page; pool_leak and retry_storm list both api rules (D-22).
+    "signature": {"page": [PAGE_RULES],
                   "leading_signal": {"signal": str, "direction": ("up", "down"), "floor": NUM},
                   "cells": [{"signal": str, "op": OPS, "value": (int, float, str), "text": str}]},
     "effect_matrix": dict.fromkeys(EFFECT_ROWS, EFFECTS),

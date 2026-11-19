@@ -56,16 +56,16 @@ class Targets:
 
 
 class Fault:
-    """One fault_script kind; subclasses override onset() and neutralized(). This base does nothing."""
+    """One fault_script kind. Subclasses implement onset() and neutralized()."""
 
     def __init__(self, script: dict, rng):
         self.script, self.rng = script, rng  # rng: the round's `fault` stream
 
     def onset(self, t: Targets, now_ms: int) -> None:
-        pass
+        raise NotImplementedError
 
     def neutralized(self, t: Targets) -> bool:
-        return False
+        raise NotImplementedError
 
 
 class ExportLeak(Fault):
@@ -90,14 +90,26 @@ class PoisonBatch(Fault):
         return not t.in_jobs(self.poison)
 
 
-FAULTS: dict[str, type[Fault]] = {"export_leak": ExportLeak, "poison_batch": PoisonBatch}  # kind -> implementation
+class LedgerSlowdown(Fault):
+    """retry_storm (§7.5): a short ledger index-maintenance window that multiplies hold times."""
+
+    def onset(self, t, now_ms):
+        t.set_hold_factor(self.script["multiplier"])
+        t.after(round(self.script["duration_s"] * 1000), lambda: t.set_hold_factor(1.0))
+
+    def neutralized(self, t):
+        return t.retry_policy("api") == "backoff"
+
+
+# fault_script kind -> implementation; the pack loader accepts exactly these kinds.
+FAULTS: dict[str, type[Fault]] = {"export_leak": ExportLeak, "poison_batch": PoisonBatch,
+                                  "ledger_slowdown": LedgerSlowdown}
 
 
 class Injector:
     def __init__(self, world, scenario: dict, rng):
         self.targets = Targets(world)
-        # shortcut: kinds without an implementation yet run the do-nothing Fault, until SCN-06 adds the last.
-        self.fault = FAULTS.get(scenario["fault_script"]["kind"], Fault)(scenario["fault_script"], rng)
+        self.fault = FAULTS[scenario["fault_script"]["kind"]](scenario["fault_script"], rng)
         self.active = False
         delay_ms = round(scenario["parameters"]["onset_s"] * 1000 * rng.uniform(1 - ONSET_JITTER, 1 + ONSET_JITTER))
         self.onset_ms = world.engine.submit(self._onset, delay_ms)  # sim time; hidden until the debrief

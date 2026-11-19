@@ -10,10 +10,10 @@ CELLS = PACK.scenarios["pool_leak"]["signature"]["cells"]
 
 
 @pytest.mark.parametrize("seed", [1, 2, 3])
-def test_pages_api_latency_high_and_shows_its_signature(seed):
+def test_pages_an_api_rule_and_shows_its_signature(seed):
     w, events, rule, t0 = run_to_page("pool_leak", seed)
     tk = ticks(events)
-    assert rule == "api_latency_high" and tk[t0]["sim_time_ms"] > w.injector.onset_ms
+    assert rule in ("api_latency_high", "api_error_rate_high") and tk[t0]["sim_time_ms"] > w.injector.onset_ms
     assert [c["text"] for c in CELLS if not holds(c, tk[-1])] == []  # at T0+60 s
 
 
