@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from controller.feed import load_content
 from controller.game import Game
 from controller.link import Link
 
@@ -62,6 +63,7 @@ def test_preroll_reaches_the_page(sim_port, scenario_id, tmp_path):
         while not (link.up() and link.config):
             await asyncio.sleep(0.01)
         game = Game(link, lambda: False, tmp_path / "session.json")
+        game.content = load_content(Path(__file__).parents[1] / "feed_templates")
         await game.new_session("standard")
         game.session.round_order = [scenario_id] + [s for s in PAGES if s != scenario_id]
         started = time.monotonic()

@@ -1,8 +1,12 @@
 """A scripted stand-in for sim on the link, and healthy-by-default tick contents."""
 
 import asyncio
+from pathlib import Path
 
-CONFIG = {"budget": 12, "round_time_limit_s": 720, "stability_window_s": 60,
+from controller.feed import load_content
+
+CONTENT = load_content(Path(__file__).parents[1] / "feed_templates")
+CONFIG = {"budget": 12, "round_time_limit_s": 720, "stability_window_s": 60, "feed": {"interval_s": 5, "min_count": 5},
           "alerts": {"api_error_rate_pct": 5, "api_latency_p95_ms": 1000, "orders_backlog": 500, "for_s": 30}}
 ONSET_MS = 700_000
 WEIGHTS = {"read_failed": 1, "read_slow": 1, "receipt_unavailable": 1, "order_rejected": 1, "order_delayed": 1,

@@ -24,6 +24,7 @@ from pathlib import Path
 
 from controller.alerts import Alerts
 from controller.errors import ApiError
+from controller.feed import Feed
 from controller.health import Health
 from controller.impact import Impact
 from controller.link import HEARTBEAT_TIMEOUT_S, LinkDown
@@ -143,6 +144,8 @@ class Game:
         self._health: Health | None = None
         self.checks: list[dict] = []  # the latest health-check results (CTL-08)
         self.impact: Impact | None = None  # the current round's impact accounting (CTL-10)
+        self.content: dict | None = None  # feed templates and fictional lists, loaded at startup (CTL-11)
+        self.feed: Feed | None = None
 
     def save(self) -> None:
         if self.session is None:
@@ -251,6 +254,7 @@ class Game:
         self._stop_runner()
         self._tick, self._alerts, self.events = None, Alerts(config["alerts"]), []
         self._health, self.checks, self.impact = Health(), [], Impact()
+        self.feed = Feed(rnd.seed, self.content, config["feed"])
         self._log("state_change", **{"from": None, "to": rnd.state})
         self._task = asyncio.get_running_loop().create_task(self._run(rnd, retry))
         return rnd
@@ -316,6 +320,7 @@ class Game:
             self._log("alert", **{k: alert[k] for k in ("rule_id", "state", "is_page")})
         bad = event["bad_events"]
         self.impact.add(bad["counts"], bad["weights"], after_t0=rnd.t0_ms is not None and t_ms > rnd.t0_ms)
+        self.feed.add(t_ms, bad["counts"], all(c["passing"] for c in self.checks), not fault["active"], rnd.t0_ms)
         if rnd.state == "ACTIVE":
             self._update(rnd, t_ms)
         return None
@@ -411,5 +416,6 @@ class Game:
             "health_checks": self.checks if live else [],
             "alerts": list(self._alerts.alerts.values()) if live else [],
             "impact": self.impact.counters() if live else None,
+            "feed": self.feed.items if live else [],
             "statuses": {name: s["status"] for name, s in self._tick["services"].items()} if live else {},
         }

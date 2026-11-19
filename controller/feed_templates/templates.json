@@ -1,0 +1,30 @@
+{
+  "_note": "SEC-06: one category per symptom, and no text names a cause. Draft; content sign-off is SEC-06 (D-03).",
+  "complaint": {
+    "read_failed": ["The {brand} site keeps showing me an error page.",
+                    "I can't open my account page, it just errors.",
+                    "Tried to look at the {product} and the page failed to load."],
+    "read_slow": ["The {brand} site is crawling today.",
+                  "Pages take forever to load. Is it just me?",
+                  "Been waiting ages for the {product} page to open."],
+    "receipt_unavailable": ["I need the receipt for my {product} and the download won't work.",
+                            "Receipt download says it's unavailable. I need it for my expenses."],
+    "order_rejected": ["I tried to check out and the order didn't go through.",
+                       "Checkout failed for my {product}. Did I get charged?"],
+    "order_delayed": ["My order from 10 minutes ago still says 'pending'.",
+                      "Ordered the {product} a while ago and it's still not confirmed."],
+    "order_lost": ["I placed an order for the {product} and now it's gone from my account.",
+                   "My order just disappeared. Where did it go?"]
+  },
+  "escalation": {
+    "read_failed": ["Third time trying. Is the store down?", "Still getting errors. This has been going on for ages."],
+    "read_slow": ["Still painfully slow. I've given up for now.", "Is anyone looking at how slow this is?"],
+    "receipt_unavailable": ["Still no receipt. My accountant is waiting on this."],
+    "order_rejected": ["I've tried to check out four times now. Nothing works."],
+    "order_delayed": ["Still 'pending' after all this time. Should I order somewhere else?"],
+    "order_lost": ["Another order of mine has vanished. What is going on?"]
+  },
+  "recovery": ["Checkout's working again, thanks!", "Site feels normal again. Got my {product} ordered."],
+  "chatter": ["Love the new candles!", "My {product} arrived today and it's lovely.",
+              "Any restock coming for the {product}?"]
+}

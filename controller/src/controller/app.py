@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict
 from starlette.exceptions import HTTPException
 
 from controller.errors import ApiError
+from controller.feed import load_content
 from controller.game import Game
 from controller.link import Link
 
@@ -54,6 +55,7 @@ async def recheck_isolation() -> None:
 
 @contextlib.asynccontextmanager
 async def lifespan(_app: FastAPI):
+    game.content = load_content()  # never run without the feed copy: a bad file stops startup
     game.load()
     state["isolation"] = isolation.run()
     print(f"controller: isolation {state['isolation']}", flush=True)

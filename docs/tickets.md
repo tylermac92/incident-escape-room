@@ -984,7 +984,7 @@
 - **Generation:** every 5 s of simulation time, take the trailing 10 s window and select the category with the highest count, as long as the count is at least 5. Emit with probability `min(1, count/50)`. At most 1 item per 5 s.
 - Escalating templates are used when a category has been bad for more than 3 min.
 - **Pre-roll (D-09):** generation runs throughout pre-roll in simulation time. Items before T0 are flagged `pre_alert: true` and delivered as history, not as live events. Neutral chatter (at most 1 per 60 s) appears only in the pre-onset baseline.
-- Every item carries `evidence {category, count, window_start_ms, window_end_ms}` and fictional `customer` data (SEC-05).
+- Every complaint item carries `evidence {category, count, window_start_ms, window_end_ms}`, and every item carries fictional `customer` data (SEC-05). Recovery and neutral chatter items have `evidence: null`, since no bad events back them; `kind` (`complaint`, `escalation`, `recovery`, `chatter`) tells them apart.
 - **Safeguards:**
   - No item is emitted if its evidence count is below the minimum.
   - Items are dropped if their category has had zero bad events for 10 s or more at emit time.
