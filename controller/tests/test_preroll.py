@@ -7,50 +7,7 @@ import pytest
 from controller import game as game_module
 from controller.game import Game
 from controller.link import LinkDown
-
-CONFIG = {"budget": 12, "round_time_limit_s": 720, "alerts": {"api_error_rate_pct": 5, "api_latency_p95_ms": 1000,
-                                                             "orders_backlog": 500, "for_s": 30}}
-ONSET_MS = 700_000
-
-
-def services(error_pct=0.0, p95=100, jobs=1):
-    return {"api": {"status": "Up", "error_rate_pct": error_pct, "latency_p95_ms": p95},
-            "worker": {"status": "Up", "queue_depth": {"jobs": jobs}},
-            "ledger": {"status": "Up"}}
-
-
-class FakeSim:
-    """A link whose sim answers each cmd.step with the tick script(t_ms) returns."""
-
-    def __init__(self, script):
-        self.script, self.config, self.sent, self.events = script, CONFIG, [], asyncio.Queue()
-        self.t_ms, self.on_step = 0, None
-
-    def up(self):
-        return True
-
-    def drain(self):
-        while not self.events.empty():
-            self.events.get_nowait()
-
-    async def send(self, cmd):
-        self.sent.append(cmd)
-        if cmd["type"] == "cmd.start_round":
-            self.t_ms = 0
-        elif cmd["type"] == "cmd.step":
-            self.t_ms += 100 * cmd["n"]
-            if self.on_step:
-                self.on_step(self)
-            out = self.script(self.t_ms)
-            if out is not None:
-                self.events.put_nowait({"type": "evt.tick", "sim_time_ms": self.t_ms, "services": out,
-                                        "hidden": {"scenario_id": "x", "fault": {"active": self.t_ms > ONSET_MS,
-                                                                                  "onset_ms": ONSET_MS}}})
-
-
-def after_onset(**bad):
-    return lambda t: services(**bad) if t > ONSET_MS else services()
-
+from fakes import ONSET_MS, FakeSim, after_onset, services
 
 async def prepared(link, locked=lambda: False, tmp=None):
     game = Game(link, locked, tmp / "session.json")
@@ -80,7 +37,8 @@ def test_stops_in_the_second_the_page_fires(tmp_path):
     view = game.view(rnd)
     assert view["timer_remaining_s"] == 720 and view["t_ms"] == 730_000  # the timer starts at T0
     assert view["alerts"] == [{"rule_id": "api_error_rate_high", "state": "FIRING", "fired_at_ms": 730_000,
-                               "cleared_at_ms": None, "is_page": True}]
+                               "cleared_at_ms": None, "is_page": True,
+                               "text": "api error rate at or above 5% for 30 s"}]
     assert "hidden" not in str(view) and not {"scenario_id", "t_onset_ms", "seed"} & set(view)
 
 
@@ -149,3 +107,12 @@ def test_late_ticks_from_a_stopped_round_are_skipped(tmp_path):
              "hidden": {"fault": {"active": True, "onset_ms": 0}}}
     link.on_step = lambda sim: sim.t_ms == 1000 and sim.events.put_nowait(stale)
     assert run(link, tmp_path).session.current_round.t0_ms == 730_000
+
+
+def test_round_event_log(tmp_path):
+    """CTL-07: every event has a strictly increasing seq and a sim time."""
+    game = run(FakeSim(after_onset(error_pct=10)), tmp_path)
+    assert [(e["seq"], e["sim_time_ms"], e["kind"], e["payload"]) for e in game.events] == [
+        (1, 0, "state_change", {"from": None, "to": "PREPARING"}),
+        (2, 730_000, "alert", {"rule_id": "api_error_rate_high", "state": "FIRING", "is_page": True}),
+        (3, 730_000, "state_change", {"from": "PREPARING", "to": "BRIEFING"})]

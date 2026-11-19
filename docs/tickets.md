@@ -942,8 +942,8 @@
 - **Rules:**
   - `api_error_rate_high`: `api` error rate ≥ 5% for 30 s.
   - `api_latency_high`: `api` p95 ≥ 1000 ms for 30 s.
-- Rules that fire in the same second page in the order listed above (D-22).
   - `orders_backlog_high`: `jobs` depth ≥ 500 for 30 s.
+- Rules that fire in the same second page in the order listed above (D-22).
 - The first rule to fire after onset is marked `is_page: true` and defines T0. Rules that fire later are secondary and don't change T0.
 - Each alert reports `FIRING` or `CLEARED` with `fired_at_ms` and `cleared_at_ms`.
 - Alert text names the symptom only.
@@ -964,7 +964,7 @@
 **Acceptance criteria**
 - B = the weighted sum of bad events from T0 to round end (`order_lost` × 3, everything else × 1). Pre-alert impact is computed and shown but excluded from B.
 - **"Customers affected, last 5 min"** = bad events in the trailing 5 minutes, capped at 2,500 *(default)*.
-- **"Open support tickets":** opened at 1 per 40 bad events; closed at 1 per 10 s once every category has been at zero for 30 s.
+- **"Open support tickets":** opened at 1 per 40 bad events; closed at 1 per 10 s once every category has been at zero for 30 s (so the first closes after 40 quiet seconds, the next at 50).
 - The counters are exact functions of the bad-event series (verified in QA-06).
 
 **Dependencies:** CTL-02, SIM-08

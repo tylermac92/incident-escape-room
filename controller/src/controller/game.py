@@ -24,6 +24,8 @@ from pathlib import Path
 
 from controller.alerts import Alerts
 from controller.errors import ApiError
+from controller.health import Health
+from controller.impact import Impact
 from controller.link import HEARTBEAT_TIMEOUT_S, LinkDown
 
 SCENARIO_IDS = ("pool_leak", "poison_message", "retry_storm")  # the closed set sim also enforces
@@ -40,6 +42,7 @@ TRANSITIONS = {
     "ENDED": {"DEBRIEF"},
 }
 LIVE = ("PREPARING", "BRIEFING", "ACTIVE", "PAUSED")  # a controller restart aborts these
+NUDGE_AFTER_MS = 180_000  # stable this long without a declaration: one nudge (§6.4)
 PREROLL_LIMIT_MS = 900_000  # no page this long after onset: preroll_no_alert
 STEPS_PER_S = 10
 ABORT_REASONS = ("sim_unavailable", "controller_restart", "isolation_check_failed", "preroll_no_alert", "player_restart")
@@ -68,7 +71,8 @@ class Round:
     budget_total: int | None = None
     budget_remaining: int | None = None
     healthy_since_ms: int | None = None
-    outcome: str | None = None
+    outcome: str | None = None  # recovered, recovered_undeclared, not_recovered (§11.3)
+    ttr_s: float | None = None  # healthy_since - T0 for the period that counted (CTL-06)
     abort_reason: str | None = None
     # Wall-clock phase times, UTC (D-12).
     briefing_opened_at: str | None = None
@@ -135,6 +139,10 @@ class Game:
         self._task: asyncio.Task | None = None  # the current round's runner
         self._tick: dict | None = None  # the current round's latest evt.tick (hidden fields included)
         self._alerts: Alerts | None = None
+        self.events: list[dict] = []  # the current round's RoundEvent log (CTL-07, §6.3)
+        self._health: Health | None = None
+        self.checks: list[dict] = []  # the latest health-check results (CTL-08)
+        self.impact: Impact | None = None  # the current round's impact accounting (CTL-10)
 
     def save(self) -> None:
         if self.session is None:
@@ -241,7 +249,9 @@ class Game:
         session.rounds.append(rnd)
         self.save()
         self._stop_runner()
-        self._tick, self._alerts = None, Alerts(config["alerts"])
+        self._tick, self._alerts, self.events = None, Alerts(config["alerts"]), []
+        self._health, self.checks, self.impact = Health(), [], Impact()
+        self._log("state_change", **{"from": None, "to": rnd.state})
         self._task = asyncio.get_running_loop().create_task(self._run(rnd, retry))
         return rnd
 
@@ -253,7 +263,9 @@ class Game:
         reason = await self._preroll(rnd)
         while reason is None and rnd.state in LIVE:
             reason = self._observe(rnd, await self.link.events.get())
-        if reason is not None and rnd.state in LIVE:
+        if reason is None:
+            await self._stop_sim()  # the round ended (timeout)
+        elif rnd.state in LIVE:
             await self._abort(rnd, reason)
             if reason == "preroll_no_alert" and retry:  # once, with a new seed (CTL-05)
                 self._begin(rnd.scenario_id, rnd.attempt + 1, retry=False)
@@ -276,7 +288,7 @@ class Game:
                     return reason
                 if self._alerts.page is not None:
                     rnd.t0_ms = t_ms
-                    rnd.move("BRIEFING")
+                    self._move(rnd, "BRIEFING")
                     self.save()
                     return None
                 if t_ms > rnd.t_onset_ms + PREROLL_LIMIT_MS:
@@ -296,17 +308,41 @@ class Game:
         if self.locked():
             return "isolation_check_failed"
         # §6.3 order: health checks (CTL-08), alerts, impact (CTL-10), feed (CTL-11), state, broadcast (CTL-18).
-        self._tick, fault = event, event["hidden"]["fault"]
+        self._tick, fault, t_ms = event, event["hidden"]["fault"], event["sim_time_ms"]
         rnd.t_onset_ms = fault["onset_ms"]
-        self._alerts.evaluate(event["services"], event["sim_time_ms"], armed=fault["active"])
+        since_t0 = None if rnd.t0_ms is None else (t_ms - rnd.t0_ms) // 1000 + 1
+        self.checks = self._health.evaluate(event["services"], since_t0)
+        for alert in self._alerts.evaluate(event["services"], t_ms, armed=fault["active"]):
+            self._log("alert", **{k: alert[k] for k in ("rule_id", "state", "is_page")})
+        bad = event["bad_events"]
+        self.impact.add(bad["counts"], bad["weights"], after_t0=rnd.t0_ms is not None and t_ms > rnd.t0_ms)
+        if rnd.state == "ACTIVE":
+            self._update(rnd, t_ms)
         return None
+
+    def _update(self, rnd: Round, t_ms: int) -> None:
+        """The state step of a tick while ACTIVE: stability, the nudge, and the timeout (CTL-06, §6.4)."""
+        if not all(c["passing"] for c in self.checks):
+            rnd.healthy_since_ms = None
+        elif rnd.healthy_since_ms is None:
+            rnd.healthy_since_ms = t_ms
+        stable_ms = -1 if rnd.healthy_since_ms is None else t_ms - rnd.healthy_since_ms
+        if stable_ms >= NUDGE_AFTER_MS and not any(e["kind"] == "nudge" for e in self.events):
+            self._log("nudge")
+        if rnd.mode == "standard" and t_ms - rnd.t0_ms >= rnd.time_limit_s * 1000:
+            stable = stable_ms >= self.link.config["stability_window_s"] * 1000
+            rnd.outcome = "recovered_undeclared" if stable else "not_recovered"
+            rnd.ttr_s = (rnd.healthy_since_ms - rnd.t0_ms) / 1000 if stable else None
+            self._move(rnd, "TIMED_OUT")
+            self._move(rnd, "DEBRIEF")
+            self.save()
 
     async def start(self, round_id: str) -> Round:
         rnd = self._current(round_id, ("BRIEFING",))
         if self.locked():
             raise ApiError(423, "locked", "A safety check failed, so the game is locked.")
         await self._send({"type": "cmd.resume"})
-        rnd.move("ACTIVE")
+        self._move(rnd, "ACTIVE")
         rnd.on_call_at = utc_now()
         self.save()
         return rnd
@@ -314,7 +350,7 @@ class Game:
     async def pause(self, round_id: str) -> Round:
         rnd = self._current(round_id, ("ACTIVE",))
         await self._send({"type": "cmd.pause"})
-        rnd.move("PAUSED")
+        self._move(rnd, "PAUSED")
         self._paused_at = time.monotonic()
         self.save()
         return rnd
@@ -322,7 +358,7 @@ class Game:
     async def resume(self, round_id: str) -> Round:
         rnd = self._current(round_id, ("PAUSED",))
         await self._send({"type": "cmd.resume"})
-        rnd.move("ACTIVE")
+        self._move(rnd, "ACTIVE")
         self._unpause(rnd)
         self.save()
         return rnd
@@ -335,6 +371,16 @@ class Game:
             await self._abort(rnd, "player_restart")
         return self._begin(rnd.scenario_id, rnd.attempt + 1)
 
+    def _log(self, kind: str, **payload) -> None:
+        """Append to the current round's event log: seq strictly increasing, stamped with sim time."""
+        t_ms = self._tick["sim_time_ms"] if self._tick else 0
+        self.events.append({"seq": len(self.events) + 1, "sim_time_ms": t_ms, "kind": kind, "payload": payload})
+
+    def _move(self, rnd: Round, to: str, abort_reason: str | None = None) -> None:
+        old = rnd.state
+        rnd.move(to, abort_reason)
+        self._log("state_change", **{"from": old, "to": to}, **({"abort_reason": abort_reason} if abort_reason else {}))
+
     def _unpause(self, rnd: Round) -> None:
         if self._paused_at is not None:
             rnd.paused_s += time.monotonic() - self._paused_at
@@ -342,9 +388,12 @@ class Game:
 
     async def _abort(self, rnd: Round, reason: str) -> None:
         self._stop_runner()
-        rnd.move("ABORTED", reason)
+        self._move(rnd, "ABORTED", reason)
         self._unpause(rnd)
         self.save()
+        await self._stop_sim()
+
+    async def _stop_sim(self) -> None:
         try:
             await self.link.send({"type": "cmd.stop"})
         except LinkDown:
@@ -359,7 +408,8 @@ class Game:
         elapsed_s = (t_ms - rnd.t0_ms) / 1000 if live and rnd.t0_ms is not None else 0
         return out | {
             "t_ms": t_ms, "timer_remaining_s": max(0, rnd.time_limit_s - elapsed_s),  # from T0 only (§6.2)
-            "health_checks": [],  # CTL-08
+            "health_checks": self.checks if live else [],
             "alerts": list(self._alerts.alerts.values()) if live else [],
+            "impact": self.impact.counters() if live else None,
             "statuses": {name: s["status"] for name, s in self._tick["services"].items()} if live else {},
         }
