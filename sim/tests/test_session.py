@@ -37,7 +37,8 @@ def test_stepping_emits_one_tick_per_simulated_second():
     assert set(tick["services"]) == {"api", "worker", "ledger"}
     assert set(tick["bad_events"]["counts"]) == set(tick["bad_events"]["weights"])
     assert tick["config"]["retry_policy"] == {"api": "backoff", "worker": "backoff"}
-    assert tick["hidden"] == {"scenario_id": "pool_leak", "fault": {"active": False, "neutralized": False}}
+    assert tick["hidden"]["scenario_id"] == "pool_leak"
+    assert tick["hidden"]["fault"]["active"] is False and tick["hidden"]["fault"]["neutralized"] is False
 
 
 def test_same_seed_same_ticks():
@@ -67,10 +68,11 @@ def test_same_seed_same_ticks():
 def test_bad_commands_get_evt_error_and_change_nothing(raw, code):
     s, events = session()
     world = s.world
+    pending = list(world.engine._pending)  # the scheduled onset
     s.handle(raw)
     [error] = events
     assert (error["type"], error["code"]) == ("evt.error", code)
-    assert s.world is world and s.phase == "preroll" and world.engine.steps == 0 and not world.engine._pending
+    assert s.world is world and s.phase == "preroll" and world.engine.steps == 0 and world.engine._pending == pending
 
 
 def test_commands_need_a_round():

@@ -33,6 +33,7 @@ class Ledger:
         self.completed: list = []  # calls finished this step (any reason), drained by metrics
         self.peak_in_use = 0  # most connections leased at once this step, for pool_in_use
         self.hold_factor = 1.0  # multiplies hold times: a slowdown (test injection, retry_storm maintenance)
+        self.leak = None  # fault hook (SCN-03): leak(call) -> True keeps the connection forever
         self._running: list = []  # (done ms, seq, call)
         self._seq = 0
 
@@ -77,6 +78,11 @@ class Ledger:
         mean = self.hold_mean_ms[call.kind]
         hold = self.hold_factor * self.rng.lognormvariate(math.log(mean) - SIGMA**2 / 2, SIGMA)
         i = self.busy_until.index(min(self.busy_until))
+        if self.leak and self.leak(call):
+            # The query never returns and never gives its connection back; its caller times out.
+            self.busy_until[i] = math.inf
+            self.peak_in_use = max(self.peak_in_use, self.in_use(t))
+            return
         self.busy_until[i] = t + hold
         self.busy_ms += hold
         self.peak_in_use = max(self.peak_in_use, self.in_use(t))

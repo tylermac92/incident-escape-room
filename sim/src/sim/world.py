@@ -10,6 +10,7 @@ from sim import worker as worker_mod
 from sim.api import Api
 from sim.bad_events import WEIGHTS, BadEvents
 from sim.engine import STEP_MS, Engine
+from sim.faults import Injector
 from sim.jobs import Jobs, Message
 from sim.ledger import Ledger
 from sim.metrics import POOLS, Metrics
@@ -56,6 +57,7 @@ class World:
             "worker": lambda e: self.worker.step(e.now_ms),
             "bad_events": self._record,
         }, on_action=lambda e, apply: apply())
+        self.injector = Injector(self, pack.scenarios[scenario_id], rng["fault"])
 
     def _traffic(self, e):
         self._arrivals = self.traffic.arrivals(e.now_ms)
@@ -94,8 +96,7 @@ class World:
                 "pool_size": {**POOLS, "ledger.db": self.ledger.pool_size}, "queue_cap": {"ledger.requests": ledger_mod.QUEUE_CAP},
             },
             # For the controller only; it strips these before anything reaches the UI (T-SPOIL).
-            # shortcut: no fault runs until the fault injector (SCN-03) sets these.
-            "hidden": {"scenario_id": self.scenario_id, "fault": {"active": False, "neutralized": False}},
+            "hidden": {"scenario_id": self.scenario_id, "fault": self.injector.hidden()},
         }
 
     def submit_action(self, cmd: dict) -> None:

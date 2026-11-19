@@ -45,6 +45,10 @@ class Jobs:
     def head_attempts(self) -> int:
         return self.waiting[0].attempts if self.waiting else 0
 
+    def all_messages(self) -> list[Message]:
+        """Every message in jobs: waiting, in flight, or waiting out a requeue delay."""
+        return [*self.waiting, *self.in_flight, *(m for _, _, m in self._requeue)]
+
     def put(self, msg: Message) -> Message:
         self.waiting.append(msg)
         return msg
