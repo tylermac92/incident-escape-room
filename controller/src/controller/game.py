@@ -75,6 +75,7 @@ class Round:
     healthy_since_ms: int | None = None
     outcome: str | None = None  # recovered, recovered_undeclared, not_recovered (§11.3)
     ttr_s: float | None = None  # healthy_since - T0 for the period that counted (CTL-06)
+    premature_declarations: int = 0  # rejected declare-resolved calls (CTL-14)
     abort_reason: str | None = None
     # Wall-clock phase times, UTC (D-12).
     briefing_opened_at: str | None = None
@@ -343,8 +344,37 @@ class Game:
             rnd.outcome = "recovered_undeclared" if stable else "not_recovered"
             rnd.ttr_s = (rnd.healthy_since_ms - rnd.t0_ms) / 1000 if stable else None
             self._move(rnd, "TIMED_OUT")
-            self._move(rnd, "DEBRIEF")
-            self.save()
+            self._finish(rnd)
+
+    def _finish(self, rnd: Round) -> None:
+        """RESOLVED, TIMED_OUT or ENDED -> DEBRIEF."""
+        self._move(rnd, "DEBRIEF")
+        self.save()
+
+    async def declare(self, round_id: str) -> Round:
+        """POST /api/rounds/{id}/declare-resolved (CTL-14, §6.4)."""
+        rnd = self._current(round_id, ("ACTIVE",))
+        required_s = self.link.config["stability_window_s"]
+        stable = rnd.healthy_since_ms is not None
+        green_s = (self._tick["sim_time_ms"] - rnd.healthy_since_ms) // 1000 if stable else 0
+        if stable and green_s >= required_s:
+            rnd.outcome, rnd.ttr_s = "recovered", (rnd.healthy_since_ms - rnd.t0_ms) / 1000
+            self._log("declaration", accepted=True)
+            self._move(rnd, "RESOLVED")
+            self._finish(rnd)
+            self._stop_runner()
+            await self._stop_sim()
+            return rnd
+        weights = self.link.config["score"]
+        rnd.premature_declarations += 1
+        penalty = weights["premature"] if rnd.premature_declarations <= weights["premature_max_count"] else 0
+        failing = [c["id"] for c in self.checks if not c["passing"]]
+        self._log("declaration", accepted=False, green_for_s=green_s, failing_checks=failing)
+        self.save()
+        message = (f"Not yet — {len(failing)} health check{'s are' if len(failing) > 1 else ' is'} failing." if failing
+                   else f"Not yet — health checks have been green for {green_s} of the required {required_s} seconds.")
+        raise ApiError(409, "not_stable", message, {"green_for_s": green_s, "required_s": required_s,
+                                                     "penalty": penalty, "failing_checks": failing})
 
     async def start(self, round_id: str) -> Round:
         rnd = self._current(round_id, ("BRIEFING",))
@@ -384,6 +414,8 @@ class Game:
 
     async def act(self, round_id: str, request: dict) -> dict:
         """POST /api/rounds/{id}/actions. A repeated client_request_id gets the original answer, uncharged."""
+        if (why := catalog.invalid(request["type"], request.get("target"), request.get("params") or {})) is not None:
+            raise ApiError(422, "invalid_request", why)  # a schema error: not an attempt, so not logged
         rnd = self.round(round_id)
         prior = self._requests.get(request["client_request_id"]) if rnd is self.session.current_round else None
         if isinstance(prior, ApiError):
@@ -415,8 +447,6 @@ class Game:
 
     async def _accept(self, rnd: Round, request: dict) -> dict:
         kind, target, params = request["type"], request.get("target"), request.get("params") or {}
-        if (why := catalog.invalid(kind, target, params)) is not None:
-            raise ApiError(422, "invalid_request", why)
         if rnd is not self.session.current_round or rnd.state != "ACTIVE":
             raise ApiError(409, "invalid_state", f"Actions can only be run while the round is ACTIVE, not {rnd.state}.")
         cost = self.link.config["action_costs"][kind]
@@ -501,7 +531,8 @@ class Game:
 
     def view(self, rnd: Round) -> dict:
         """GET /api/rounds/{id}: never the seed; the scenario and onset only from the debrief (§3.2)."""
-        hidden = ("seed", "session_id") + (() if rnd.state == "DEBRIEF" else ("scenario_id", "t_onset_ms"))
+        # healthy_since would let the UI show a countdown, which §6.4 rules out.
+        hidden = ("seed", "session_id") + (() if rnd.state == "DEBRIEF" else ("scenario_id", "t_onset_ms", "healthy_since_ms"))
         out = {k: v for k, v in dataclasses.asdict(rnd).items() if k not in hidden}
         live = rnd is self.session.current_round and self._tick is not None
         t_ms = self._tick["sim_time_ms"] if live else None

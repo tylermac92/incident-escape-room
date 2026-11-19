@@ -141,12 +141,6 @@ def get_round(round_id: str) -> dict:
     return game.view(game.round(round_id))
 
 
-@app.post("/api/rounds/{round_id}/{verb}")
-async def lifecycle(round_id: str, verb: Literal["start", "pause", "resume", "restart"]) -> dict:
-    async with game.lock:
-        return game.view(await getattr(game, verb)(round_id))
-
-
 @app.get("/api/actions/catalog")
 def action_catalog() -> dict:
     if link.config is None:
@@ -167,3 +161,16 @@ class ActionRequest(BaseModel):
 async def submit_action(round_id: str, body: ActionRequest) -> dict:
     async with game.lock:
         return await game.act(round_id, body.model_dump())
+
+
+@app.post("/api/rounds/{round_id}/declare-resolved")
+async def declare_resolved(round_id: str) -> dict:
+    async with game.lock:
+        return game.view(await game.declare(round_id))
+
+
+# Last: a path parameter here would otherwise catch /actions and /declare-resolved.
+@app.post("/api/rounds/{round_id}/{verb}")
+async def lifecycle(round_id: str, verb: Literal["start", "pause", "resume", "restart"]) -> dict:
+    async with game.lock:
+        return game.view(await getattr(game, verb)(round_id))

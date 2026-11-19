@@ -181,3 +181,9 @@ def test_catalog(client):
 def test_anything_outside_the_enumerations_is_422(client, body):
     response = client.post("/api/rounds/r_any/actions", json=body)
     assert (response.status_code, response.json()["error"]["code"]) == (422, "invalid_request")
+
+
+def test_a_valid_request_reaches_the_round(client):
+    """The route itself works: a well-formed action for an unknown round is 404, not 422."""
+    response = client.post("/api/rounds/r_any/actions", json=request(1, "recycle_pool", "ledger"))
+    assert (response.status_code, response.json()["error"]["code"]) == (404, "not_found")

@@ -8,6 +8,9 @@ from controller.feed import load_content
 
 CONTENT = load_content(Path(__file__).parents[1] / "feed_templates")
 CONFIG = {"budget": 12, "round_time_limit_s": 720, "stability_window_s": 60, "feed": {"interval_s": 5, "min_count": 5},
+          "score": {"speed_max": 300, "speed_grace_s": 90, "impact_max": 300, "impact_scale": 15000,
+                    "hold_declared": 100, "hold_neutralized": 100, "budget_max": 200, "breadth_restart_all": 150,
+                    "breadth_restart_service": 25, "noeffect": 30, "premature": 50, "premature_max_count": 3},
           "action_costs": {"restart_service": 3, "restart_all": 10, "recycle_pool": 1, "set_feature_flag": 1,
                            "set_retry_policy": 1, "quarantine_head_message": 1, "purge_queue": 4},
           "alerts": {"api_error_rate_pct": 5, "api_latency_p95_ms": 1000, "orders_backlog": 500, "for_s": 30}}
