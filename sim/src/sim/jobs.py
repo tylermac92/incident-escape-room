@@ -45,6 +45,10 @@ class Jobs:
     def head_attempts(self) -> int:
         return self.waiting[0].attempts if self.waiting else 0
 
+    def all_messages(self) -> list[Message]:
+        """Every message in jobs: waiting, in flight, or waiting out a requeue delay."""
+        return [*self.waiting, *self.in_flight, *(m for _, _, m in self._requeue)]
+
     def put(self, msg: Message) -> Message:
         self.waiting.append(msg)
         return msg
@@ -64,12 +68,37 @@ class Jobs:
         msg.ready_ms = t_ms + REQUEUE_DELAY_MS
         heapq.heappush(self._requeue, (msg.ready_ms, next(self._seq), msg))
 
-    def redeliver_all(self, crashed: Message) -> None:
-        """Consumer crash: every in-flight job goes back to the head, the one that crashed it first."""
+    def redeliver_all(self, crashed: Message | None = None) -> None:
+        """Consumer crash or restart: every in-flight job goes back to the head, any crasher first."""
         others = [m for m in self.in_flight if m is not crashed]
         self.waiting.extendleft(reversed(others))
-        self.waiting.appendleft(crashed)
+        if crashed:
+            self.waiting.appendleft(crashed)
         self.in_flight.clear()
+
+    def quarantine_head(self) -> Message | None:
+        """quarantine_head_message (SCN-10): the head message moves to jobs.dlq."""
+        if not self.waiting:
+            return None
+        msg = self.waiting.popleft()
+        self.dlq.append(msg)
+        return msg
+
+    def purge(self) -> list[Message]:
+        """purge_queue (SCN-10): delete every queued message. Jobs being processed stay with the
+        consumer, as unacknowledged messages do."""
+        removed = [*self.waiting, *(m for _, _, m in self._requeue)]
+        self.waiting.clear()
+        self._requeue.clear()
+        return removed
+
+    def remove_all(self) -> list[Message]:
+        """Empty jobs (restart_all, purge_queue): every message, waiting, in flight or delayed."""
+        removed = self.all_messages()
+        self.waiting.clear()
+        self.in_flight.clear()
+        self._requeue.clear()
+        return removed
 
     def step(self, now_ms: int) -> None:
         """Move requeued jobs whose delay ends in this step to the tail."""

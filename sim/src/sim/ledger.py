@@ -17,35 +17,67 @@ from collections import deque
 from sim.engine import STEP_MS
 
 QUEUE_CAP = 300
-POOL_SIZE = 10
+POOL_SIZE = 13  # D-24 (the TDD's 10 left no margin to recover); the pack sets the round's value
 POOL_WAIT_MS = 2000
 SIGMA = 0.4
 HOLD_MEAN_MS = {"read": 80, "write": 120, "receipt_export": 300}
 
 
 class Ledger:
-    def __init__(self, rng):
+    def __init__(self, rng, pool_size: int = POOL_SIZE, hold_mean_ms: dict = HOLD_MEAN_MS):
         """rng: the round's `latency` stream (hold times)."""
-        self.rng = rng
+        self.rng, self.pool_size, self.hold_mean_ms = rng, pool_size, hold_mean_ms
         self.queue: deque = deque()  # ledger.requests: calls waiting for a connection
-        self.busy_until = [0.0] * POOL_SIZE  # per ledger.db connection; math.inf for a leaked lease
+        self.busy_until = [0.0] * pool_size  # per ledger.db connection; math.inf for a leaked lease
         self.busy_ms = 0.0  # total connection hold time, for utilization
         self.completed: list = []  # calls finished this step (any reason), drained by metrics
-        self.peak_in_use = 0  # most connections leased at once this step, for pool_in_use
+        self.pool_used = 0.0  # mean connections leased during this step (time-weighted), for pool_in_use
+        self._leases: list = []  # [start, end] of leases that may overlap this or later steps
         self.hold_factor = 1.0  # multiplies hold times: a slowdown (test injection, retry_storm maintenance)
+        self.leak = None  # fault hook (SCN-03): leak(call) -> True keeps the connection forever
         self._running: list = []  # (done ms, seq, call)
         self._seq = 0
 
+        self.up = True  # False while Restarting (SCN-08)
+
     @property
     def status(self) -> str:
-        return "Up"  # shortcut: no downtime until restart actions (SCN-08) add Restarting
+        return "Up" if self.up else "Restarting"
+
+    def go_down(self, now_ms: int) -> None:
+        """A restart begins (SCN-08): queued and running queries are lost without an answer, so their
+        callers time out, and every lease is released, leaked ones included."""
+        self.up = False
+        self.queue.clear()
+        for _, _, call in self._running:
+            call.done_ms = call.reason = None
+        self._running.clear()
+        self.release_all(now_ms)
+
+    def come_up(self, now_ms: int) -> None:
+        self.up = True
+
+    def recycle(self, now_ms: int) -> None:
+        """recycle_pool (SCN-09): close and reopen every connection; queries running on them fail."""
+        for _, _, call in self._running:
+            call.done_ms, call.reason = now_ms, "unavailable"
+            self.completed.append(call)
+        self._running.clear()
+        self.release_all(now_ms)
+
+    def release_all(self, t_ms: int) -> None:
+        """Every connection is free from t_ms (restart, recycle_pool)."""
+        self.busy_until = [float(t_ms)] * self.pool_size
+        self._leases = [[s, min(e, t_ms)] for s, e in self._leases]
 
     def in_use(self, t_ms: float) -> int:
         return sum(1 for b in self.busy_until if b > t_ms)
 
     def step(self, now_ms: int, calls) -> None:
         end = now_ms + STEP_MS
-        self.peak_in_use = self.in_use(now_ms)
+        if not self.up:  # reads stall: nothing is answered, so callers time out
+            self.pool_used = 0.0
+            return
         arrivals = deque(sorted(calls, key=lambda c: c.start_ms))  # sorted() is stable: arrival order
         while True:
             head_t = start_t = expire_t = math.inf
@@ -72,14 +104,21 @@ class Ledger:
                     self.queue.append(call)
         while self._running and self._running[0][0] < end:
             self.completed.append(heapq.heappop(self._running)[2])
+        self.pool_used = sum(max(0.0, min(e, end) - max(s, now_ms)) for s, e in self._leases) / STEP_MS
+        self._leases = [lease for lease in self._leases if lease[1] > end]
 
     def _start(self, call, t):
-        mean = HOLD_MEAN_MS[call.kind]
+        mean = self.hold_mean_ms[call.kind]
         hold = self.hold_factor * self.rng.lognormvariate(math.log(mean) - SIGMA**2 / 2, SIGMA)
         i = self.busy_until.index(min(self.busy_until))
+        if self.leak and self.leak(call):
+            # The query never returns and never gives its connection back; its caller times out.
+            self.busy_until[i] = math.inf
+            self._leases.append([t, math.inf])
+            return
         self.busy_until[i] = t + hold
+        self._leases.append([t, t + hold])
         self.busy_ms += hold
-        self.peak_in_use = max(self.peak_in_use, self.in_use(t))
         call.done_ms = math.ceil(t + hold)
         call.reason = "timeout" if call.done_ms > call.deadline_ms else None
         self._seq += 1

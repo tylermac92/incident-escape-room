@@ -1,0 +1,56 @@
+# TDD §7.5.
+id: retry_storm
+title: Retry storm against ledger
+parameters:
+  onset_s: 750  # ±20% seeded jitter (SCN-03)
+  overrides:
+    retry_policy: {api: aggressive}  # 4 immediate retries, shown as-is in the Config panel
+fault_script:
+  kind: ledger_slowdown
+  multiplier: 8  # ledger hold times during index maintenance
+  duration_s: 20
+recent_change: ledger index maintenance (20 s window)
+
+signature:
+  page: [api_error_rate_high, api_latency_high]  # both start within a second of each other (D-22)
+  leading_signal: {signal: ledger.retry_share, direction: up, floor: 0.05}
+  cells:
+    - {signal: ledger.pool_used, op: ">=", value: 13, text: "ledger.db pool pinned at 13/13"}
+    - {signal: ledger.throughput_rps, op: ">=", value: 80, text: "ledger at capacity, far above api input"}
+    - {signal: ledger.retry_share, op: ">=", value: 0.6, text: "retry share above 60%"}
+    - {signal: ledger.queue, op: ">=", value: 150, text: "ledger.requests near the cap of 300"}
+    - {signal: ledger.main_error, op: "==", value: timeout, text: "ledger errors are mainly timeout"}
+    # Over every api request; orders, a quarter of traffic, still get their 202 (D-23).
+    - {signal: api.error_rate_pct, op: ">=", value: 60, text: "api errors at about 75%: nearly every read fails"}
+    - {signal: worker.status, op: "==", value: Up, text: "worker is Up"}
+    # Some writes get through, so a 10 s window can hold no worker errors at all (D-23).
+    - {signal: worker.completed_rps, op: "<=", value: 6, text: "worker writes mostly fail (downstream_timeout)"}
+    - {signal: jobs.depth, op: ">=", value: 300, text: "jobs growing"}
+    - {signal: jobs.head_attempts, op: "<=", value: 2, text: "head delivery attempts stay low"}
+
+effect_matrix:
+  restart_service(api): mitigates
+  restart_service(worker): no_effect
+  restart_service(ledger): no_effect
+  restart_all: restores
+  recycle_pool(ledger): no_effect
+  set_feature_flag(receipt_export, off): no_effect
+  set_feature_flag(receipt_export, on): no_effect
+  set_feature_flag(checkout_banner, *): no_effect
+  set_retry_policy(api, backoff): fix
+  set_retry_policy(worker, backoff): no_change
+  set_retry_policy(*, aggressive): unhelpful
+  quarantine_head_message(jobs): unhelpful
+  purge_queue(jobs): unhelpful
+
+debrief_copy:
+  explanation: >-
+    A short ledger slowdown made api requests time out. api retried each one four times with no pause,
+    so ledger got more than twice the normal work and stayed overloaded after the slowdown ended.
+  clues:
+    - ledger was doing far more work than customers were asking for, and most of it was retries.
+    - The maintenance window ended but nothing recovered.
+    - The Config panel showed the api retry policy as 4 retries with no backoff.
+  takeaway: When a dependency gets more requests than customers send, look at how callers retry before restarting the dependency.
+  held: Yes. api now waits between retries, so the next slowdown won't turn into a storm.
+  not_held: No. api still retried with no pause, so the next ledger slowdown would start the storm again.

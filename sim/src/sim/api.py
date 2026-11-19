@@ -43,6 +43,7 @@ class Response:
     start_ms: int
     end_ms: int
     reason: str | None = None
+    disabled: bool = False  # receipt export answered "temporarily unavailable": not an error, still bad
 
     @property
     def latency_ms(self) -> int:
@@ -50,13 +51,17 @@ class Response:
 
 
 class Api:
-    def __init__(self, rng, enqueue, policy: str = "backoff"):
-        """rng: the round's `latency` stream (backoff jitter). enqueue(placed_ms) adds an order to `jobs`."""
+    def __init__(self, rng, enqueue, policy: str = "backoff", flags: dict | None = None):
+        """rng: the round's `latency` stream (backoff jitter). enqueue(placed_ms) adds an order to `jobs`.
+
+        flags: the world's feature flags, shared and live.
+        """
         self.rng, self.enqueue, self.policy = rng, enqueue, policy
+        self.flags = flags if flags is not None else {"receipt_export": True}
         self.up = True  # False while Restarting (SCN-08)
         self.outbox: list[Call] = []
         self.responses: list[Response] = []  # drained by the metrics and bad-event phases
-        self.clients_peak = 0  # most client slots in use this step, for pool_in_use
+        self.pool_used = 0  # client slots in use at the end of this step, for pool_in_use
         self._in_flight: dict[Call, tuple[str, int]] = {}  # call -> (flow, request start)
         self._pending: list[tuple[int, int, str, int, int]] = []  # (ready, seq, flow, request start, attempt)
         self._seq = itertools.count()
@@ -64,6 +69,20 @@ class Api:
     @property
     def status(self) -> str:
         return "Up" if self.up else "Restarting"
+
+    def go_down(self, now_ms: int) -> None:
+        """A restart begins (SCN-08): in-flight requests fail, and so does every new one until come_up."""
+        self.up = False
+        for call, (flow, started) in self._in_flight.items():
+            call.abandoned = True
+            self.responses.append(Response(flow, started, now_ms, "unavailable"))
+        for _, _, flow, started, _ in self._pending:
+            self.responses.append(Response(flow, started, now_ms, "unavailable"))
+        self._in_flight.clear()
+        self._pending.clear()
+
+    def come_up(self, now_ms: int) -> None:
+        self.up = True
 
     def step(self, now_ms: int, arrivals: dict[str, int]) -> None:
         # shortcut: ledger runs after api in a step, so a timeout or ledger answer is noticed at the
@@ -80,6 +99,8 @@ class Api:
             for _ in range(count):
                 if not self.up:
                     self.responses.append(Response(flow, now_ms, now_ms, "unavailable"))
+                elif flow == "receipt_export" and not self.flags["receipt_export"]:
+                    self.responses.append(Response(flow, now_ms, now_ms + OWN_MS, disabled=True))
                 elif flow in SYNC_FLOWS:
                     self._schedule(now_ms + OWN_MS, flow, now_ms, 1)
                 else:
@@ -101,7 +122,7 @@ class Api:
                 waiting.append((ready, flow, started, attempt))
         for ready, flow, started, attempt in waiting:
             heapq.heappush(self._pending, (ready, next(self._seq), flow, started, attempt))
-        self.clients_peak = len(self._in_flight)
+        self.pool_used = len(self._in_flight)
 
     def _schedule(self, ready, flow, started, attempt):
         heapq.heappush(self._pending, (ready, next(self._seq), flow, started, attempt))

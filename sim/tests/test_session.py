@@ -6,12 +6,15 @@ import json
 import pytest
 
 from sim import server
+from sim.scenarios import load_pack
 from sim.server import Session
+
+PACK = load_pack(server.Path(__file__).parents[1] / "scenarios")
 
 
 def session(test_mode=False, start=True):
     events = []
-    s = Session(events.append, test_mode)
+    s = Session(events.append, test_mode, PACK)
     if start:
         s.handle(json.dumps({"type": "cmd.start_round", "scenario_id": "pool_leak", "seed": 7}))
     return s, events
@@ -34,7 +37,8 @@ def test_stepping_emits_one_tick_per_simulated_second():
     assert set(tick["services"]) == {"api", "worker", "ledger"}
     assert set(tick["bad_events"]["counts"]) == set(tick["bad_events"]["weights"])
     assert tick["config"]["retry_policy"] == {"api": "backoff", "worker": "backoff"}
-    assert tick["hidden"] == {"scenario_id": "pool_leak", "fault": {"active": False, "neutralized": False}}
+    assert tick["hidden"]["scenario_id"] == "pool_leak"
+    assert tick["hidden"]["fault"]["active"] is False and tick["hidden"]["fault"]["neutralized"] is False
 
 
 def test_same_seed_same_ticks():
@@ -60,14 +64,21 @@ def test_same_seed_same_ticks():
      "invalid_request"),
     ('{"type": "cmd.action", "action": {"action_id": "a1", "type": "rm_rf", "target": "api"}}', "invalid_request"),
     ('{"type": "cmd.action", "action_id": "a1", "type": "restart_service"}', "unknown_command"),
+    ('{"type": "cmd.action", "action": {"action_id": "a1", "type": "set_retry_policy", "target": "api", '
+     '"params": {"mode": "yolo"}}}', "invalid_request"),
+    ('{"type": "cmd.action", "action": {"action_id": "a1", "type": "set_feature_flag", "target": "receipt_export", '
+     '"params": {"enabled": "no"}}}', "invalid_request"),
+    ('{"type": "cmd.action", "action": {"action_id": "a1", "type": "restart_all", "params": {"force": true}}}',
+     "invalid_request"),
 ])
 def test_bad_commands_get_evt_error_and_change_nothing(raw, code):
     s, events = session()
     world = s.world
+    pending = list(world.engine._pending)  # the scheduled onset
     s.handle(raw)
     [error] = events
     assert (error["type"], error["code"]) == ("evt.error", code)
-    assert s.world is world and s.phase == "preroll" and world.engine.steps == 0 and not world.engine._pending
+    assert s.world is world and s.phase == "preroll" and world.engine.steps == 0 and world.engine._pending == pending
 
 
 def test_commands_need_a_round():

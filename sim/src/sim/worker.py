@@ -30,24 +30,43 @@ class Slot:
 
 
 class Worker:
-    def __init__(self, rng, jobs, policy: str = "backoff"):
+    def __init__(self, rng, jobs, policy: str = "backoff", restart_backoff_ms: int = RESTART_BACKOFF_MS):
         """rng: the round's `latency` stream (backoff jitter)."""
-        self.rng, self.jobs, self.policy = rng, jobs, policy
+        self.rng, self.jobs, self.policy, self.restart_backoff_ms = rng, jobs, policy, restart_backoff_ms
         self.slots: list[Slot | None] = [None] * SLOTS
         self.free_at = [0] * SLOTS
         self.outbox: list[Call] = []  # writes starting in the next step, for ledger
         self.attempts: list[Response] = []  # drained by the metrics and bad-event phases
-        self.clients_peak = 0  # slots with a write in flight this step, for pool_in_use
+        self.pool_used = 0  # slots with a write in flight at the end of this step, for pool_in_use
         self.down_until = 0  # consumer restart after a crash
         self.crash_looping = False  # set by a crash, cleared by the next completed job
+        self.restarting = False  # restart_service / restart_all (SCN-08)
 
     @property
     def status(self) -> str:
-        return "Crash-looping" if self.crash_looping else "Up"
+        return "Restarting" if self.restarting else "Crash-looping" if self.crash_looping else "Up"
+
+    def go_down(self, now_ms: int) -> None:
+        """A restart begins (SCN-08): in-flight jobs go back to the head, unacknowledged; orders wait."""
+        self.restarting = True
+        for slot in self.slots:
+            if slot and slot.call:
+                slot.call.abandoned = True
+        self.jobs.redeliver_all()
+        self.slots = [None] * SLOTS
+        self.crash_looping = False  # a fresh consumer
+
+    def come_up(self, now_ms: int) -> None:
+        self.restarting = False
+        self.down_until = now_ms
+        self.free_at = [now_ms] * SLOTS
 
     def step(self, now_ms: int) -> None:
         end = now_ms + STEP_MS
         self.jobs.step(now_ms)
+        if self.restarting:
+            self.pool_used = 0
+            return
         # ledger has run this step, so every answer before `end` is known exactly.
         for i, slot in enumerate(self.slots):
             call = slot and slot.call
@@ -79,7 +98,7 @@ class Worker:
                 start = max(slot.write_at, end)
                 slot.call = Call("worker", "write", slot.attempt, start, start + TIMEOUT_MS)
                 self.outbox.append(slot.call)
-        self.clients_peak = sum(1 for s in self.slots if s and s.call)
+        self.pool_used = sum(1 for s in self.slots if s and s.call)
 
     def _finish(self, i, t, reason):
         slot = self.slots[i]
@@ -111,6 +130,6 @@ class Worker:
         self.attempts.append(Response("job", t, t, "crash"))
         self.jobs.redeliver_all(msg)
         self.slots = [None] * SLOTS
-        self.down_until = t + RESTART_BACKOFF_MS
+        self.down_until = t + self.restart_backoff_ms
         self.free_at = [self.down_until] * SLOTS
         self.crash_looping = True

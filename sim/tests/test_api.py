@@ -79,7 +79,7 @@ def test_late_ledger_answer_is_a_timeout_and_the_call_stays_abandoned():
 def test_client_pool_caps_calls_in_flight():
     api = make()
     run(api, lambda c: None, arrivals_at={0: {"read": 70}}, steps=2)
-    assert api.clients_peak == CLIENT_POOL
+    assert api.pool_used == CLIENT_POOL
 
 
 def test_orders_answered_202_after_enqueue():

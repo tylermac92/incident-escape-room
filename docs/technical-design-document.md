@@ -527,7 +527,7 @@ All three scenarios use the same world, catalog, and dashboard. Only the hidden 
 | Setting | Value |
 |---|---|
 | Traffic | Reads at 30 rps, receipt exports at 2 rps, orders at 10/s (§8) |
-| `ledger` | Database pool `ledger.db` of 10 connections, about 4 in use at baseline; request queue `ledger.requests` capped at 300; pool wait timeout 2000 ms |
+| `ledger` | Database pool `ledger.db` of 13 connections (D-24), about 4 in use at baseline; request queue `ledger.requests` capped at 300; pool wait timeout 2000 ms |
 | `api` → `ledger` client | Timeout 1000 ms; client pool `api.ledger_client` of 50 |
 | `worker` | Concurrency 10 (client pool `worker.ledger_client` of 10); maximum about 40 jobs/s; supervised consumer restarts 5 s after a crash |
 | `jobs` | FIFO queue. A job whose processing failed is requeued to the **tail** with its attempt count incremented. A job that was in flight when the consumer crashed is redelivered to the **head**. Max-delivery is not configured (part of the story); only a player action moves a message to `jobs.dlq`. |
@@ -538,9 +538,9 @@ All three scenarios use the same world, catalog, and dashboard. Only the hidden 
 
 | Signal | `pool_leak` | `poison_message` | `retry_storm` |
 |---|---|---|---|
-| Alert that pages | `api_latency_high` (p95 ≥ 1000 ms for 30 s) | `orders_backlog_high` (jobs ≥ 500 for 30 s) | `api_error_rate_high` (≥ 5% for 30 s) |
+| Alert that pages | `api_latency_high` (p95 ≥ 1000 ms for 30 s) or `api_error_rate_high`; both start within a second (D-22) | `orders_backlog_high` (jobs ≥ 500 for 30 s) | `api_error_rate_high` (≥ 5% for 30 s) or `api_latency_high`; both start within a second (D-22) |
 | `ledger.db` pool in use | **Climbs in steps from about 4 to 10/10 over about 4 min, and doesn't drop when traffic dips** | Normal (2–4) | Pinned at 10/10, but connections are working, not stuck |
-| `ledger` throughput, retry share | Falls toward 0; retry share ≤ 35% | Lower (fewer writes); retry share about 0% | **At capacity (about 100 rps), far above `api` input (about 42); retry share > 60%** |
+| `ledger` throughput, retry share | Falls below normal, toward 0 as the last connections leak; retries dominate once requests time out (D-23) | Lower (fewer writes); retry share about 0% | **At capacity (about 100 rps), far above `api` input (about 42); retry share > 60%** |
 | `ledger.requests` queue depth | Rises only after the pool is exhausted | about 0 | **Near the cap of 300** |
 | `ledger` errors (main reason) | `pool_timeout` | none | `timeout`, with `pool_timeout` and `queue_full` |
 | `api` errors and p95 | p95 creeps up, then 1 s timeouts; errors follow | Normal | Errors jump quickly; p95 about 1 s or more |
@@ -693,7 +693,7 @@ A test pins each bold cell as part of that scenario's signature (T-DIAG). In eve
   - An arriving request joins `ledger.requests` (FIFO, cap 300). If the queue is full, it is rejected with `queue_full`.
   - A request at the head takes a connection from `ledger.db`. If it has not got one within 2000 ms of arriving (time in the queue counts; D-20), it fails with `pool_timeout`.
   - Hold times are lognormal with σ = 0.4. Means: reads 80 ms, writes 120 ms, receipt exports 300 ms.
-  - Capacity is about 100 rps, and baseline utilization about 42%.
+  - Capacity is about 130 rps, and baseline utilization about 32% (13 connections; D-24).
   - A request whose caller has already timed out is still processed; that wasted work drives the retry storm. Its completion counts toward `ledger` throughput but not toward any customer success.
 - **`jobs` and `worker`.** Each `worker` slot takes the head message, processes it for about 100 ms, then writes it to `ledger` (timeout 2000 ms, `backoff` policy). On success the message is acknowledged. A handled failure requeues the message to the tail after 2 s. A crash leaves the in-flight message at the head and puts the consumer into a 5 s restart backoff.
 
@@ -730,7 +730,7 @@ A test pins each bold cell as part of that scenario's signature (T-DIAG). In eve
 | Leak probability per export | 1.25% (one leak per ~40 s) | **Yes** | Sets how long the `pool_leak` creep lasts before the alert |
 | Batch size / restart backoff (`poison_message`) | 200 / 5 s | Rarely | |
 | Maintenance multiplier / duration (`retry_storm`) | 8× / 20 s | **Yes** | Must reliably tip the system into a storm without lasting long enough to be blamed |
-| `ledger` capacity margin (pool, hold times) | 10 connections, about 100 rps | **Yes** | Storm stability, and how quickly the system recovers once load drops |
+| `ledger` capacity margin (pool, hold times) | 13 connections, about 130 rps (D-24) | **Yes** | Storm stability, and how quickly the system recovers once load drops |
 | Alert thresholds | §9.6 | **Yes** | How early the page fires |
 | Stability window W | 60 s | **Yes** | Verification takes skill but shouldn't feel like dead time |
 | Round time limit | 720 s | **Yes** | SC-1 timing |
@@ -747,9 +747,9 @@ A test pins each bold cell as part of that scenario's signature (T-DIAG). In eve
 |---|---|---|---|---|
 | Latency (`latency_p50_ms`, `latency_p95_ms`) | ms | Time from a request reaching the service until its response. Timeouts are recorded at the timeout value. | Trailing 10 s, computed each second | Shown per service. `worker` reports job attempt duration. |
 | Error rate (`error_rate_pct`) | % | Failed requests (or job attempts) ÷ total completed, over the window | Trailing 10 s | `reason`: `timeout`, `pool_timeout`, `queue_full`, `downstream_timeout`, `crash`, `unavailable` |
-| Throughput (`throughput_rps`) | requests/s | Requests completed (any status) per second | Trailing 10 s average | `api`: by `flow` (`read`, `receipt_export`, `order`). `ledger`: by `caller` (`api`, `worker`) × `attempt` (`first`, `retry`). `worker`: `attempts` vs `completed`. |
+| Throughput (`throughput_rps`) | requests/s | Requests completed (any status) per second. For `ledger`, requests that got a connection, including wasted work; refusals (`queue_full`, `pool_timeout`) count only toward error rate (D-21) | Trailing 10 s average | `api`: by `flow` (`read`, `receipt_export`, `order`). `ledger`: by `caller` (`api`, `worker`) × `attempt` (`first`, `retry`). `worker`: `attempts` vs `completed`. |
 | Queue depth (`queue_depth`) | messages | Messages waiting plus in flight, sampled each second | Instantaneous | `jobs`: also head message delivery attempts and `jobs.dlq` count. `ledger.requests`: shown against the cap of 300. |
-| Pool usage (`pool_in_use`) | connections, % | Connections checked out at the sample instant (the maximum within the second) ÷ pool size | Instantaneous | `api.ledger_client` (50), `worker.ledger_client` (10), `ledger.db` (10) |
+| Pool usage (`pool_in_use`) | connections, % | Connections checked out, averaged over the second (D-21), ÷ pool size | Mean over the second | `api.ledger_client` (50), `worker.ledger_client` (10), `ledger.db` (10) |
 
 ### 9.2 Presentation by service (the dashboard grid)
 
@@ -1338,3 +1338,7 @@ These decisions resolve the open questions in §17 and the gaps found during tic
 | D-18 | The controller derives its own `feed` RNG from the round seed with SHA-256. `sim` keeps the `traffic`, `latency`, and `fault` streams. | §8.1, §9.8 |
 | D-19 | **Solo project.** One person develops, tests, reviews, and approves. SC-1 (new players), SC-2c, and SC-4 (real players) become proxy checks plus **accepted validation gaps**. Week estimates are removed from §16.1. | Header, §2.6, §3.1, §15.7, §16 |
 | D-20 | **`ledger` pool wait counts from arrival.** A `ledger` request that has not got a `ledger.db` connection within 2000 ms of *arriving* fails with `pool_timeout`; time in `ledger.requests` counts. This keeps `pool_leak`'s signature (requests wait 2 s, then `pool_timeout`). In `retry_storm` the queue then runs near its cap rather than pinned at 300, and `pool_timeout` joins `timeout` and `queue_full`. | §7.2, §7.5, §8.3 |
+| D-21 | **Metric definitions corrected while building the scenarios.** `pool_in_use` is the time-weighted mean of connections in use over the second (the client pools average their 10 per-step samples), not the maximum. `ledger` `throughput_rps` counts requests that got a connection, including wasted work; `queue_full` and `pool_timeout` refusals count toward error rate only. With the maximum, `ledger.db` sat near 7/10 at baseline and pinned at 10 a minute after a leak began, hiding `pool_leak`'s step climb; the baseline figures in §7 (about 4; normal 2–4) are means. Counting refusals would show `retry_storm` at 170–210 rps instead of about 100. | §7.2, §9.1 |
+| D-22 | **Same-second alert ties, and which `api` rule pages.** Rules that fire in the same second page in §9.6 table order (`api_error_rate_high`, `api_latency_high`, `orders_backlog_high`). `pool_leak` and `retry_storm` may page on either `api` rule: their signature's page cell lists both. With a 1 s client timeout, every `api` request slower than 1000 ms is a failed one, recorded when it fails, so the latency and error conditions start within a second of each other in both scenarios. Thresholds from 600 to 1000 ms were measured over 130–150 seeds and none separated the two reliably. The other §7.2 cells still separate the scenarios. | §7.2, §9.6 |
+| D-23 | **Signature cells at T0+60 s that the model cannot meet as written.** In `pool_leak`, `ledger` throughput is at or below normal (≤ 50 rps; it reaches 0 only once every connection has leaked) rather than near 0, and the "retry share ≤ 35%" cell is dropped: once requests time out, two of every three `ledger` requests are `backoff` retries. Throughput level (≤ 50 versus ≥ 80 rps), not retry share, separates `pool_leak` from `retry_storm`. In `retry_storm`, `api` errors are about 75% rather than 90% or more, because orders (a quarter of `api` traffic) still get their 202; the cell is ≥ 60%. Its `worker` cell checks completions (≤ 6 jobs/s) and `jobs` depth rather than the main error reason, because some writes get through and a 10 s window can hold no `worker` errors at all. | §7.2, §7.5 |
+| D-24 | **`ledger.db` has 13 connections** (was 10): capacity about 130 rps, baseline about 4 in use (32%). With 10, the backlog left behind by a fix kept `ledger` overloaded even under `backoff`: every timed-out read made 3 attempts and `worker` drained its backlog at full speed, together more than 10 connections' worth. So `set_retry_policy(api, backoff)` and `recycle_pool` usually failed to recover the system. With 13 (measured): the storm still sustains under `aggressive` (30 of 30 seeds), `backoff` drains it 5–24 s after taking effect (median about 7 s), flag-off-plus-recycle recovers and holds in every seed, and recycle alone recovers for 2–8 min in about 5 of 6 seeds. At 14 the storm dissolved by itself in 2 of 30 seeds, and at 15 in every seed. `pool_leak` now pages a median of about 400 s after onset (TDD: about 285 s); REL-05/REL-06 should revisit both. Signature cells read 13/13 wherever §7 says 10/10. | §7.1, §7.2, §7.3, §7.5, §8.3, §8.7 |
