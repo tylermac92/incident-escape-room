@@ -27,7 +27,7 @@ HOST_LOCK = Path("/tmp/escape-host-lock")
 # Fail closed until the startup check has run.
 state = {"isolation": {"status": "fail", "failed": ["not_run"]}}
 link = Link()
-game = Game()
+game = Game(link, locked=lambda: isolation_result()["status"] != "pass")
 
 
 def envelope(status: int, code: str, message: str, details: dict | None = None) -> JSONResponse:
@@ -112,8 +112,9 @@ class NewSession(BaseModel):
 
 
 @app.post("/api/sessions", status_code=201)
-def create_session(body: NewSession | None = None) -> dict:
-    return game.new_session((body or NewSession()).mode).summary()
+async def create_session(body: NewSession | None = None) -> dict:
+    async with game.lock:
+        return (await game.new_session((body or NewSession()).mode)).summary()
 
 
 @app.get("/api/sessions/current")
@@ -124,3 +125,20 @@ def current_session() -> dict:
 @app.post("/api/sessions/current/complete")
 def complete_session() -> dict:
     return game.complete().summary()
+
+
+@app.post("/api/sessions/current/rounds", status_code=201)
+async def prepare_round() -> dict:
+    async with game.lock:
+        return game.view(await game.prepare())
+
+
+@app.get("/api/rounds/{round_id}")
+def get_round(round_id: str) -> dict:
+    return game.view(game.round(round_id))
+
+
+@app.post("/api/rounds/{round_id}/{verb}")
+async def lifecycle(round_id: str, verb: Literal["start", "pause", "resume", "restart"]) -> dict:
+    async with game.lock:
+        return game.view(await getattr(game, verb)(round_id))

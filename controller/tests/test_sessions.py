@@ -1,5 +1,6 @@
 """CTL-03: sessions, their mirror in session.json, and what the UI may see of them."""
 
+import asyncio
 import json
 
 import pytest
@@ -11,7 +12,7 @@ from controller.game import SCENARIO_IDS, Game, Round
 
 @pytest.fixture
 def game(tmp_path, monkeypatch):
-    game = Game(tmp_path / "session.json")
+    game = Game(app_module.link, lambda: False, tmp_path / "session.json")
     monkeypatch.setattr(app_module, "game", game)
     return game
 
@@ -37,7 +38,7 @@ def test_create_defaults_to_standard_with_a_hidden_random_order(client, game):
 
 
 def test_orders_vary(game):
-    orders = {tuple(game.new_session("standard").round_order) for _ in range(60)}
+    orders = {tuple(asyncio.run(game.new_session("standard")).round_order) for _ in range(60)}
     assert len(orders) > 1
 
 
@@ -76,15 +77,15 @@ def test_session_survives_a_restart(client, game, tmp_path):
     client.post("/api/sessions", json={"mode": "practice"})
     debrief_all(game.session)
     client.post("/api/sessions/current/complete")
-    restored = Game(tmp_path / "session.json")
+    restored = Game(None, None, tmp_path / "session.json")
     restored.load()
     assert restored.session == game.session
 
 
 def test_unwritable_or_unreadable_file_does_not_break_the_game(tmp_path):
-    game = Game(tmp_path / "missing-dir" / "session.json")
-    game.new_session("standard")  # save fails, logged, gameplay goes on
+    game = Game(None, None, tmp_path / "missing-dir" / "session.json")
+    asyncio.run(game.new_session("standard"))  # save fails, logged, gameplay goes on
     (tmp_path / "bad.json").write_text("{not json")
-    broken = Game(tmp_path / "bad.json")
+    broken = Game(None, None, tmp_path / "bad.json")
     broken.load()
     assert broken.session is None

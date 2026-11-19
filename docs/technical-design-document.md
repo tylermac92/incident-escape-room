@@ -424,6 +424,7 @@ stateDiagram-v2
   PREPARING --> BRIEFING: pre-roll reached the alert instant
   PREPARING --> ABORTED: sim error or isolation failure
   BRIEFING --> ACTIVE: player clicks Go on call
+  BRIEFING --> ABORTED: sim error or isolation failure
   ACTIVE --> PAUSED: pause
   PAUSED --> ACTIVE: resume
   ACTIVE --> RESOLVED: declaration accepted

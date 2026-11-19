@@ -816,7 +816,7 @@
 
 **Acceptance criteria**
 - **States:** `PREPARING`, `BRIEFING`, `ACTIVE`, `PAUSED`, `RESOLVED`, `TIMED_OUT`, `ENDED` (practice mode only, D-02), `ABORTED`, `DEBRIEF`, plus the global `LOCKED`.
-- **Allowed transitions:** those in the §6.1 diagram, plus `ACTIVE`/`PAUSED` → `ENDED` → `DEBRIEF` in practice mode. In practice mode, `ACTIVE` → `TIMED_OUT` never occurs. Any other transition request returns `409 invalid_state`.
+- **Allowed transitions:** those in the §6.1 diagram, plus `ACTIVE`/`PAUSED` → `ENDED` → `DEBRIEF` in practice mode. `BRIEFING` → `ABORTED` is for game failures only (`sim` lost, isolation failed); the player can't restart from `BRIEFING`. In practice mode, `ACTIVE` → `TIMED_OUT` never occurs. Any other transition request returns `409 invalid_state`.
 - **Endpoints:**
   - `POST /api/sessions/current/rounds` (prepare the next round)
   - `POST /api/rounds/{id}/start` (`BRIEFING` → `ACTIVE`; sends `cmd.resume`)
