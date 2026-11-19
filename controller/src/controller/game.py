@@ -41,6 +41,7 @@ TRANSITIONS = {
     "ENDED": {"DEBRIEF"},
 }
 LIVE = ("PREPARING", "BRIEFING", "ACTIVE", "PAUSED")  # a controller restart aborts these
+NUDGE_AFTER_MS = 180_000  # stable this long without a declaration: one nudge (§6.4)
 PREROLL_LIMIT_MS = 900_000  # no page this long after onset: preroll_no_alert
 STEPS_PER_S = 10
 ABORT_REASONS = ("sim_unavailable", "controller_restart", "isolation_check_failed", "preroll_no_alert", "player_restart")
@@ -69,7 +70,8 @@ class Round:
     budget_total: int | None = None
     budget_remaining: int | None = None
     healthy_since_ms: int | None = None
-    outcome: str | None = None
+    outcome: str | None = None  # recovered, recovered_undeclared, not_recovered (§11.3)
+    ttr_s: float | None = None  # healthy_since - T0 for the period that counted (CTL-06)
     abort_reason: str | None = None
     # Wall-clock phase times, UTC (D-12).
     briefing_opened_at: str | None = None
@@ -259,7 +261,9 @@ class Game:
         reason = await self._preroll(rnd)
         while reason is None and rnd.state in LIVE:
             reason = self._observe(rnd, await self.link.events.get())
-        if reason is not None and rnd.state in LIVE:
+        if reason is None:
+            await self._stop_sim()  # the round ended (timeout)
+        elif rnd.state in LIVE:
             await self._abort(rnd, reason)
             if reason == "preroll_no_alert" and retry:  # once, with a new seed (CTL-05)
                 self._begin(rnd.scenario_id, rnd.attempt + 1, retry=False)
@@ -307,7 +311,26 @@ class Game:
         since_t0 = None if rnd.t0_ms is None else (t_ms - rnd.t0_ms) // 1000 + 1
         self.checks = self._health.evaluate(event["services"], since_t0)
         self._alerts.evaluate(event["services"], event["sim_time_ms"], armed=fault["active"])
+        if rnd.state == "ACTIVE":
+            self._update(rnd, t_ms)
         return None
+
+    def _update(self, rnd: Round, t_ms: int) -> None:
+        """The state step of a tick while ACTIVE: stability, the nudge, and the timeout (CTL-06, §6.4)."""
+        if not all(c["passing"] for c in self.checks):
+            rnd.healthy_since_ms = None
+        elif rnd.healthy_since_ms is None:
+            rnd.healthy_since_ms = t_ms
+        stable_ms = -1 if rnd.healthy_since_ms is None else t_ms - rnd.healthy_since_ms
+        if stable_ms >= NUDGE_AFTER_MS and not any(e["kind"] == "nudge" for e in self.events):
+            self._log("nudge")
+        if rnd.mode == "standard" and t_ms - rnd.t0_ms >= rnd.time_limit_s * 1000:
+            stable = stable_ms >= self.link.config["stability_window_s"] * 1000
+            rnd.outcome = "recovered_undeclared" if stable else "not_recovered"
+            rnd.ttr_s = (rnd.healthy_since_ms - rnd.t0_ms) / 1000 if stable else None
+            self._move(rnd, "TIMED_OUT")
+            self._move(rnd, "DEBRIEF")
+            self.save()
 
     async def start(self, round_id: str) -> Round:
         rnd = self._current(round_id, ("BRIEFING",))
@@ -363,6 +386,9 @@ class Game:
         self._move(rnd, "ABORTED", reason)
         self._unpause(rnd)
         self.save()
+        await self._stop_sim()
+
+    async def _stop_sim(self) -> None:
         try:
             await self.link.send({"type": "cmd.stop"})
         except LinkDown:
