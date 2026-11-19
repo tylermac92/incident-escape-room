@@ -30,9 +30,9 @@ class Slot:
 
 
 class Worker:
-    def __init__(self, rng, jobs, policy: str = "backoff"):
+    def __init__(self, rng, jobs, policy: str = "backoff", restart_backoff_ms: int = RESTART_BACKOFF_MS):
         """rng: the round's `latency` stream (backoff jitter)."""
-        self.rng, self.jobs, self.policy = rng, jobs, policy
+        self.rng, self.jobs, self.policy, self.restart_backoff_ms = rng, jobs, policy, restart_backoff_ms
         self.slots: list[Slot | None] = [None] * SLOTS
         self.free_at = [0] * SLOTS
         self.outbox: list[Call] = []  # writes starting in the next step, for ledger
@@ -111,6 +111,6 @@ class Worker:
         self.attempts.append(Response("job", t, t, "crash"))
         self.jobs.redeliver_all(msg)
         self.slots = [None] * SLOTS
-        self.down_until = t + RESTART_BACKOFF_MS
+        self.down_until = t + self.restart_backoff_ms
         self.free_at = [self.down_until] * SLOTS
         self.crash_looping = True

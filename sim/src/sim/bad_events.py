@@ -36,8 +36,11 @@ class BadEvents:
                     self.counts["read_failed"] += 1
                 elif r.latency_ms > SLOW_MS:
                     self.counts["read_slow"] += 1
+            elif r.flow == "receipt_export":
+                if r.reason is not None or r.disabled:
+                    self.counts["receipt_unavailable"] += 1
             elif r.reason is not None:
-                self.counts["receipt_unavailable" if r.flow == "receipt_export" else "order_rejected"] += 1
+                self.counts["order_rejected"] += 1
         # worker has run this step, so an order still not done by its breach time is late. Once each.
         while self._orders and self._orders[0].placed_ms + ORDER_TARGET_MS < now_ms + STEP_MS:
             msg = self._orders.popleft()

@@ -32,22 +32,36 @@ SLOWDOWN_FACTOR = 8  # ledger_slowdown injection (D-10): the retry_storm mainten
 
 
 class World:
-    def __init__(self, scenario_id: str, seed: int, emit):
+    def __init__(self, scenario_id: str, seed: int, emit, pack):
+        """pack: the loaded scenario pack (sim.scenarios); the world is its baseline plus the
+        scenario's allowed overrides (§7.1, SCN-02)."""
         rng = streams(seed)
         self.scenario_id, self.emit = scenario_id, emit
-        self.traffic = Traffic(rng["traffic"])
+        cfg, overrides = pack.world, pack.scenarios[scenario_id]["parameters"].get("overrides", {})
+        self.flags = {**cfg["flags"], **overrides.get("flags", {})}
+        policy = {**cfg["retry_policy"], **overrides.get("retry_policy", {})}
+        # A feature that has never been on has no customers using it yet, so no requests either.
+        self._exports_launched = self.flags["receipt_export"]
+        t = cfg["traffic"]
+        self.traffic = Traffic(rng["traffic"], t["rates"], amplitude=t["amplitude"], noise=t["noise"])
         self.jobs, self.bad, self.metrics = Jobs(), BadEvents(), Metrics()
-        self.api = Api(rng["latency"], self._enqueue)
-        self.ledger = Ledger(rng["latency"])
-        self.worker = Worker(rng["latency"], self.jobs)
+        self.api = Api(rng["latency"], self._enqueue, policy["api"], self.flags)
+        self.ledger = Ledger(rng["latency"], cfg["ledger"]["pool_size"], cfg["ledger"]["hold_mean_ms"])
+        self.worker = Worker(rng["latency"], self.jobs, policy["worker"], cfg["worker"]["restart_backoff_ms"])
         self._arrivals: dict[str, int] = {}
         self.engine = Engine({
-            "traffic": lambda e: setattr(self, "_arrivals", self.traffic.arrivals(e.now_ms)),
+            "traffic": self._traffic,
             "api": lambda e: self.api.step(e.now_ms, self._arrivals),
             "ledger": self._ledger,
             "worker": lambda e: self.worker.step(e.now_ms),
             "bad_events": self._record,
         }, on_action=lambda e, apply: apply())
+
+    def _traffic(self, e):
+        self._arrivals = self.traffic.arrivals(e.now_ms)
+        self._exports_launched |= self.flags["receipt_export"]
+        if not self._exports_launched:
+            self._arrivals["receipt_export"] = 0
 
     def _enqueue(self, placed_ms):
         self.bad.track(self.jobs.put(Message(placed_ms)))
@@ -73,10 +87,11 @@ class World:
             "services": self.metrics.tick(self.api, self.ledger, self.worker, self.jobs),
             "bad_events": {"counts": self.bad.take(), "weights": WEIGHTS},
             "config": {
+                "flags": dict(self.flags),
                 "retry_policy": {"api": self.api.policy, "worker": self.worker.policy},
                 "timeout_ms": {"api.ledger_client": api_mod.TIMEOUT_MS, "worker.ledger_client": worker_mod.TIMEOUT_MS,
                                "ledger.db": ledger_mod.POOL_WAIT_MS},
-                "pool_size": POOLS, "queue_cap": {"ledger.requests": ledger_mod.QUEUE_CAP},
+                "pool_size": {**POOLS, "ledger.db": self.ledger.pool_size}, "queue_cap": {"ledger.requests": ledger_mod.QUEUE_CAP},
             },
             # For the controller only; it strips these before anything reaches the UI (T-SPOIL).
             # shortcut: no fault runs until the fault injector (SCN-03) sets these.

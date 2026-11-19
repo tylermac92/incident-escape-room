@@ -6,12 +6,15 @@ import json
 import pytest
 
 from sim import server
+from sim.scenarios import load_pack
 from sim.server import Session
+
+PACK = load_pack(server.Path(__file__).parents[1] / "scenarios")
 
 
 def session(test_mode=False, start=True):
     events = []
-    s = Session(events.append, test_mode)
+    s = Session(events.append, test_mode, PACK)
     if start:
         s.handle(json.dumps({"type": "cmd.start_round", "scenario_id": "pool_leak", "seed": 7}))
     return s, events

@@ -68,8 +68,10 @@ class Metrics:
         seconds = len(self._window)  # fewer than 10 at the start of a round
         merged = {svc: [s for b in self._window for s in b[svc]] for svc in ("api", "ledger", "worker")}
 
+        sizes = {**POOLS, "ledger.db": ledger.pool_size}
+
         def pool(name):
-            return {name: {"used": peaks[name], "max": POOLS[name]}}
+            return {name: {"used": peaks[name], "max": sizes[name]}}
 
         worker_m = summarize(merged["worker"], seconds, ("completed",))
         worker_m["throughput_rps"]["attempts"] = round(len(merged["worker"]) / seconds, 1)

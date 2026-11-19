@@ -24,11 +24,11 @@ HOLD_MEAN_MS = {"read": 80, "write": 120, "receipt_export": 300}
 
 
 class Ledger:
-    def __init__(self, rng):
+    def __init__(self, rng, pool_size: int = POOL_SIZE, hold_mean_ms: dict = HOLD_MEAN_MS):
         """rng: the round's `latency` stream (hold times)."""
-        self.rng = rng
+        self.rng, self.pool_size, self.hold_mean_ms = rng, pool_size, hold_mean_ms
         self.queue: deque = deque()  # ledger.requests: calls waiting for a connection
-        self.busy_until = [0.0] * POOL_SIZE  # per ledger.db connection; math.inf for a leaked lease
+        self.busy_until = [0.0] * pool_size  # per ledger.db connection; math.inf for a leaked lease
         self.busy_ms = 0.0  # total connection hold time, for utilization
         self.completed: list = []  # calls finished this step (any reason), drained by metrics
         self.peak_in_use = 0  # most connections leased at once this step, for pool_in_use
@@ -74,7 +74,7 @@ class Ledger:
             self.completed.append(heapq.heappop(self._running)[2])
 
     def _start(self, call, t):
-        mean = HOLD_MEAN_MS[call.kind]
+        mean = self.hold_mean_ms[call.kind]
         hold = self.hold_factor * self.rng.lognormvariate(math.log(mean) - SIGMA**2 / 2, SIGMA)
         i = self.busy_until.index(min(self.busy_until))
         self.busy_until[i] = t + hold

@@ -66,8 +66,8 @@ class Session:
     A command that is malformed or not allowed is answered with evt.error and changes nothing.
     """
 
-    def __init__(self, emit, test_mode: bool):
-        self.emit, self.test_mode = emit, test_mode
+    def __init__(self, emit, test_mode: bool, pack):
+        self.emit, self.test_mode, self.pack = emit, test_mode, pack
         self.world: World | None = None
         self.phase: str | None = None
         self._play: asyncio.Task | None = None
@@ -101,7 +101,7 @@ class Session:
         scenario_id = field(cmd, "scenario_id", str, SCENARIO_IDS)
         seed = field(cmd, "seed", int)
         self.stop()
-        self.world, self.phase = World(scenario_id, seed, self.emit), "preroll"
+        self.world, self.phase = World(scenario_id, seed, self.emit, self.pack), "preroll"
 
     def step(self, cmd):
         n = field(cmd, "n", int, range(1, MAX_STEPS + 1))
@@ -165,7 +165,7 @@ def test_mode() -> bool:
 
 async def link(ws: ServerConnection) -> None:
     out: asyncio.Queue = asyncio.Queue()
-    session = Session(out.put_nowait, test_mode())
+    session = Session(out.put_nowait, test_mode(), state["pack"])
 
     async def heartbeats():
         while True:

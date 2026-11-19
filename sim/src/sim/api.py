@@ -43,6 +43,7 @@ class Response:
     start_ms: int
     end_ms: int
     reason: str | None = None
+    disabled: bool = False  # receipt export answered "temporarily unavailable": not an error, still bad
 
     @property
     def latency_ms(self) -> int:
@@ -50,9 +51,13 @@ class Response:
 
 
 class Api:
-    def __init__(self, rng, enqueue, policy: str = "backoff"):
-        """rng: the round's `latency` stream (backoff jitter). enqueue(placed_ms) adds an order to `jobs`."""
+    def __init__(self, rng, enqueue, policy: str = "backoff", flags: dict | None = None):
+        """rng: the round's `latency` stream (backoff jitter). enqueue(placed_ms) adds an order to `jobs`.
+
+        flags: the world's feature flags, shared and live.
+        """
         self.rng, self.enqueue, self.policy = rng, enqueue, policy
+        self.flags = flags if flags is not None else {"receipt_export": True}
         self.up = True  # False while Restarting (SCN-08)
         self.outbox: list[Call] = []
         self.responses: list[Response] = []  # drained by the metrics and bad-event phases
@@ -80,6 +85,8 @@ class Api:
             for _ in range(count):
                 if not self.up:
                     self.responses.append(Response(flow, now_ms, now_ms, "unavailable"))
+                elif flow == "receipt_export" and not self.flags["receipt_export"]:
+                    self.responses.append(Response(flow, now_ms, now_ms + OWN_MS, disabled=True))
                 elif flow in SYNC_FLOWS:
                     self._schedule(now_ms + OWN_MS, flow, now_ms, 1)
                 else:

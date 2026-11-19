@@ -11,7 +11,7 @@ from sim.metrics import Metrics, percentile
 
 def services(responses=(), calls=(), attempts=(), api_peak=0, worker_peak=0, db_peak=0):
     api = NS(responses=list(responses), clients_peak=api_peak, status="Up")
-    ledger = NS(completed=list(calls), peak_in_use=db_peak, status="Up", queue=[1, 2, 3])
+    ledger = NS(completed=list(calls), peak_in_use=db_peak, status="Up", queue=[1, 2, 3], pool_size=10)
     worker = NS(attempts=list(attempts), clients_peak=worker_peak, status="Crash-looping")
     return api, ledger, worker
 
