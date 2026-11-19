@@ -79,3 +79,21 @@ def test_link_reports_failure_at_connect_then_closes():
             return first, closed.value.rcvd.code
 
     assert run(FAIL, check) == ({"type": "evt.heartbeat", "isolation": FAIL}, 1011)
+
+
+def test_link_carries_commands_and_events():
+    async def check(port):
+        async with connect(f"ws://127.0.0.1:{port}/link") as ws:
+            await ws.send(json.dumps({"type": "cmd.start_round", "scenario_id": "poison_message", "seed": 3}))
+            await ws.send(json.dumps({"type": "cmd.step", "n": 10}))
+            await ws.send(json.dumps({"type": "cmd.resume"}))
+            await ws.send(json.dumps({"type": "cmd.pause"}))
+            await ws.send(json.dumps({"type": "cmd.step", "n": 10}))  # not allowed after pre-roll
+            got = []
+            while len(got) < 2:
+                event = json.loads(await asyncio.wait_for(ws.recv(), 2))
+                if event["type"] != "evt.heartbeat":
+                    got.append(event)
+            return [(e["type"], e.get("sim_time_ms"), e.get("code")) for e in got]
+
+    assert run(PASS, check) == [("evt.tick", 1000, None), ("evt.error", None, "not_allowed")]

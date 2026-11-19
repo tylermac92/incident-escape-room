@@ -442,7 +442,7 @@
 
 **Acceptance criteria**
 - Arrivals join `ledger.requests` (FIFO, cap 300). Arrivals beyond the cap are rejected immediately with `queue_full`.
-- The request at the head takes a connection from `ledger.db` (10 connections). If none is free within 2000 ms, it fails with `pool_timeout`.
+- The request at the head takes a connection from `ledger.db` (10 connections). If it has not got one within 2000 ms of arriving (queue time counts; D-20), it fails with `pool_timeout`.
 - Hold times are lognormal with σ = 0.4 and these means: read 80 ms, write 120 ms, receipt export 300 ms. Measured baseline capacity is about 100 rps and utilization about 42% (±5 percentage points).
 - A request whose caller has already timed out is still processed and counts toward `ledger` throughput, but not toward any customer success.
 - Every request carries `caller` and `attempt` so throughput can be broken down by caller × attempt.
@@ -450,7 +450,7 @@
 
 **Dependencies:** SIM-01
 
-**TDD traceability:** §7.1, §8.3, §9.1
+**TDD traceability:** §7.1, §8.3, §9.1; decision D-20
 
 ---
 
@@ -545,7 +545,7 @@
 - **Commands accepted:**
   - `cmd.start_round {scenario_id, seed}` (enters the stepped pre-roll phase)
   - `cmd.step {n}`, accepted in player mode **only while in pre-roll**, and at any time in test mode
-  - `cmd.resume`, `cmd.pause`, `cmd.action {action_id, type, target, params}`, `cmd.stop`
+  - `cmd.resume`, `cmd.pause`, `cmd.action {action: {action_id, type, target, params}}` (nested, because the envelope's `type` names the command), `cmd.stop`
   - `cmd.test_inject {kind, duration_s}`, test mode only (D-10)
 - **Events emitted:** `evt.tick` (one per simulated second), `evt.action_applied`, `evt.heartbeat` (1 Hz wall clock), `evt.error`. `evt.prealert_ready` is removed (D-05).
 - `evt.tick` contains the metrics, bad-event counts, statuses, and config snapshot, plus hidden fields (`fault.active`, `fault.neutralized`, scenario id) for the controller only.
@@ -659,8 +659,8 @@
 **Description / value:** A short slowdown in `ledger` becomes a self-sustaining overload because of aggressive client retries.
 
 **Acceptance criteria**
-- **Mechanism:** at onset (about T−0:45), a 20 s index-maintenance window multiplies `ledger` hold times by 8 *(default)*. With the `api` policy set to `aggressive`, offered load reaches about 170–210 rps against about 100 rps of capacity. The overload continues after the window ends, with `ledger.requests` pinned at 300 and goodput near 0.
-- **Symptoms:** `ledger` throughput is about 100 rps (more than twice the customer rate) with retry share above 60%; errors are `timeout` and `queue_full`; the pool is pinned at 10/10. The page is `api_error_rate_high`.
+- **Mechanism:** at onset (about T−0:45), a 20 s index-maintenance window multiplies `ledger` hold times by 8 *(default)*. With the `api` policy set to `aggressive`, offered load reaches about 170–210 rps against about 100 rps of capacity. The overload continues after the window ends, with `ledger.requests` near its cap of 300 and goodput near 0.
+- **Symptoms:** `ledger` throughput is about 100 rps (more than twice the customer rate) with retry share above 60%; errors are `timeout`, with `pool_timeout` and `queue_full` (D-20); the pool is pinned at 10/10. The page is `api_error_rate_high`.
 - **Behavior under actions:** `set_retry_policy(api, backoff)` recovers within about 15 s of taking effect. `restart_service(ledger)` is followed by the storm resuming within seconds. `restart_service(api)` recovers but does not hold.
 - **Holds rule:** neutralized only when the `api` policy is `backoff`.
 - The effect matrix, signature cells, and debrief copy are encoded as in SCN-04.
@@ -2373,6 +2373,7 @@
 | D-17 CI and Colima packet capture | QA-13, QA-18, REL-02 |
 | D-18 Controller-owned feed RNG via SHA-256 | SIM-02, CTL-11, QA-17 |
 | D-19 Solo project and accepted validation gaps | REL-02 to REL-07, SEC-06, ENV-14, CTL-21 |
+| D-20 `ledger` pool wait counts from arrival | SIM-05, SCN-04, SCN-06 |
 
 ---
 
@@ -2401,6 +2402,7 @@ All 18 questions from the previous version are now **decided**, and v3 adds D-19
 | **D-17** | UQ-17: CI packet capture | Run QA-13 on an ephemeral Linux VM runner with passwordless sudo, with `tcpdump` on the runner host outside the Compose project and the pcap kept as an artifact. Game containers never get added capabilities. On Colima, capture inside the VM with `colima ssh -- sudo tcpdump -i any`. | Empirical proof without weakening the game environment. | QA-13, QA-18, REL-02 |
 | **D-18** | UQ-18: feed RNG ownership | The controller derives its own `feed` generator from the round seed with SHA-256 (`sha256(f"{seed}:feed")`). `sim` keeps only the `traffic`, `latency`, and `fault` streams. Python's built-in `hash()` is never used for seeding. | Deterministic, independent of the link, and no cross-process RNG sharing. | SIM-02, CTL-11, QA-17 |
 | **D-19** | New in v3: who builds and tests | **Solo project.** You are the only person who develops, tests, reviews, and approves.<br>**Consequences:**<br>• Every ticket has one owner (you).<br>• Human review steps become checklists, CI gates, and fresh-session AI reviews (D-03, D-16).<br>• Success criteria that depend on other players cannot be validated before release: **SC-1 for new players, SC-2c, and SC-4 with real players**. They are replaced by proxies and recorded as **accepted validation gaps** in the sign-off and release notes.<br>• If other people ever play the game, the original human playtest protocol (TDD §15.7, v1) can be run as optional validation after release. | It makes every release gate achievable alone, without implying that self-play or AI review proves how new players will do. | REL-02 to REL-07, SEC-06, ENV-14, CTL-21 |
+| **D-20** | New after v3: when the `ledger` pool wait starts | A request fails with `pool_timeout` if it has not got a `ledger.db` connection within 2000 ms of arriving; time in `ledger.requests` counts. | The TDD left the start of the clock open, and `pool_leak` (requests wait 2 s, then `pool_timeout`) needs it to start at arrival. A probe of `retry_storm` under this rule still shows a self-sustaining storm: queue at about 220–300, about 105 rps of wasted work, retry share about 80%. | SIM-05, SCN-04, SCN-06 |
 
 ### Remaining open items
 
