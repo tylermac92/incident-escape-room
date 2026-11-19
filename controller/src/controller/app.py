@@ -7,13 +7,17 @@ code says why: `locked` when an isolation check failed, `sim_unavailable` when t
 import asyncio
 import contextlib
 from pathlib import Path
+from typing import Literal
 
 import isolation
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict
 from starlette.exceptions import HTTPException
 
+from controller.errors import ApiError
+from controller.game import Game
 from controller.link import Link
 
 CHECK_INTERVAL_S = 60
@@ -23,11 +27,7 @@ HOST_LOCK = Path("/tmp/escape-host-lock")
 # Fail closed until the startup check has run.
 state = {"isolation": {"status": "fail", "failed": ["not_run"]}}
 link = Link()
-
-
-class ApiError(Exception):
-    def __init__(self, status: int, code: str, message: str, details: dict | None = None):
-        self.status, self.code, self.message, self.details = status, code, message, details or {}
+game = Game()
 
 
 def envelope(status: int, code: str, message: str, details: dict | None = None) -> JSONResponse:
@@ -54,6 +54,7 @@ async def recheck_isolation() -> None:
 
 @contextlib.asynccontextmanager
 async def lifespan(_app: FastAPI):
+    game.load()
     state["isolation"] = isolation.run()
     print(f"controller: isolation {state['isolation']}", flush=True)
     tasks = [asyncio.create_task(recheck_isolation()), asyncio.create_task(link.run())]
@@ -103,3 +104,23 @@ def ready() -> dict:
     if not link.up():
         raise ApiError(503, "sim_unavailable", "The link to the simulation is down.")
     return {"status": "ready", "isolation": "pass", "sim_link": "up"}
+
+
+class NewSession(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["standard", "practice"] = "standard"
+
+
+@app.post("/api/sessions", status_code=201)
+def create_session(body: NewSession | None = None) -> dict:
+    return game.new_session((body or NewSession()).mode).summary()
+
+
+@app.get("/api/sessions/current")
+def current_session() -> dict:
+    return game.current().summary()
+
+
+@app.post("/api/sessions/current/complete")
+def complete_session() -> dict:
+    return game.complete().summary()
