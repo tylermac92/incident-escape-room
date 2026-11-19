@@ -964,7 +964,7 @@
 **Acceptance criteria**
 - B = the weighted sum of bad events from T0 to round end (`order_lost` × 3, everything else × 1). Pre-alert impact is computed and shown but excluded from B.
 - **"Customers affected, last 5 min"** = bad events in the trailing 5 minutes, capped at 2,500 *(default)*.
-- **"Open support tickets":** opened at 1 per 40 bad events; closed at 1 per 10 s once every category has been at zero for 30 s.
+- **"Open support tickets":** opened at 1 per 40 bad events; closed at 1 per 10 s once every category has been at zero for 30 s (so the first closes after 40 quiet seconds, the next at 50).
 - The counters are exact functions of the bad-event series (verified in QA-06).
 
 **Dependencies:** CTL-02, SIM-08

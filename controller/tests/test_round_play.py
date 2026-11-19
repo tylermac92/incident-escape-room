@@ -16,9 +16,9 @@ def broken_until(heal_ms, flap_at=None):
     return lambda t: services(error_pct=10) if ONSET_MS < t <= heal_ms or t == flap_at else services()
 
 
-def play(script, tmp_path, mode="standard", until=lambda game, rnd: rnd.state == "DEBRIEF"):
+def play(script, tmp_path, mode="standard", until=lambda game, rnd: rnd.state == "DEBRIEF", bad=lambda t: {}):
     async def main():
-        link = FakeSim(script)
+        link = FakeSim(script, bad)
         game = Game(link, lambda: False, tmp_path / "session.json")
         await game.new_session(mode)
         rnd = await game.prepare()
@@ -70,3 +70,9 @@ def test_practice_rounds_never_time_out(tmp_path):
     game, rnd, _ = play(broken_until(T0 + 100_000), tmp_path, mode="practice",
                         until=lambda g, r: r.state != "ACTIVE" or g._tick["sim_time_ms"] > T0 + 800_000)
     assert rnd.state == "ACTIVE" and rnd.outcome is None
+
+
+def test_impact_is_scored_from_t0_to_the_end_of_the_round(tmp_path):
+    game, rnd, _ = play(broken_until(T0 + 100_000), tmp_path, bad=lambda t: {"read_failed": 2})
+    impact = game.view(rnd)["impact"]
+    assert (impact["pre_alert_impact"], impact["impact"]) == (2 * 730, 2 * 720)  # CTL-10

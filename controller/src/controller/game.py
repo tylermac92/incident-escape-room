@@ -25,6 +25,7 @@ from pathlib import Path
 from controller.alerts import Alerts
 from controller.errors import ApiError
 from controller.health import Health
+from controller.impact import Impact
 from controller.link import HEARTBEAT_TIMEOUT_S, LinkDown
 
 SCENARIO_IDS = ("pool_leak", "poison_message", "retry_storm")  # the closed set sim also enforces
@@ -141,6 +142,7 @@ class Game:
         self.events: list[dict] = []  # the current round's RoundEvent log (CTL-07, §6.3)
         self._health: Health | None = None
         self.checks: list[dict] = []  # the latest health-check results (CTL-08)
+        self.impact: Impact | None = None  # the current round's impact accounting (CTL-10)
 
     def save(self) -> None:
         if self.session is None:
@@ -248,7 +250,7 @@ class Game:
         self.save()
         self._stop_runner()
         self._tick, self._alerts, self.events = None, Alerts(config["alerts"]), []
-        self._health, self.checks = Health(), []
+        self._health, self.checks, self.impact = Health(), [], Impact()
         self._log("state_change", **{"from": None, "to": rnd.state})
         self._task = asyncio.get_running_loop().create_task(self._run(rnd, retry))
         return rnd
@@ -312,6 +314,8 @@ class Game:
         self.checks = self._health.evaluate(event["services"], since_t0)
         for alert in self._alerts.evaluate(event["services"], t_ms, armed=fault["active"]):
             self._log("alert", **{k: alert[k] for k in ("rule_id", "state", "is_page")})
+        bad = event["bad_events"]
+        self.impact.add(bad["counts"], bad["weights"], after_t0=rnd.t0_ms is not None and t_ms > rnd.t0_ms)
         if rnd.state == "ACTIVE":
             self._update(rnd, t_ms)
         return None
@@ -406,5 +410,6 @@ class Game:
             "t_ms": t_ms, "timer_remaining_s": max(0, rnd.time_limit_s - elapsed_s),  # from T0 only (§6.2)
             "health_checks": self.checks if live else [],
             "alerts": list(self._alerts.alerts.values()) if live else [],
+            "impact": self.impact.counters() if live else None,
             "statuses": {name: s["status"] for name, s in self._tick["services"].items()} if live else {},
         }
