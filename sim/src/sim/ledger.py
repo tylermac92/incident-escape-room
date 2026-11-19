@@ -32,6 +32,7 @@ class Ledger:
         self.busy_ms = 0.0  # total connection hold time, for utilization
         self.completed: list = []  # calls finished this step (any reason), drained by metrics
         self.peak_in_use = 0  # most connections leased at once this step, for pool_in_use
+        self.hold_factor = 1.0  # multiplies hold times: a slowdown (test injection, retry_storm maintenance)
         self._running: list = []  # (done ms, seq, call)
         self._seq = 0
 
@@ -74,7 +75,7 @@ class Ledger:
 
     def _start(self, call, t):
         mean = HOLD_MEAN_MS[call.kind]
-        hold = self.rng.lognormvariate(math.log(mean) - SIGMA**2 / 2, SIGMA)
+        hold = self.hold_factor * self.rng.lognormvariate(math.log(mean) - SIGMA**2 / 2, SIGMA)
         i = self.busy_until.index(min(self.busy_until))
         self.busy_until[i] = t + hold
         self.busy_ms += hold

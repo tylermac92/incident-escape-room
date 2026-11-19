@@ -1046,7 +1046,7 @@ No user, account, or player-name entity exists, because none is needed.
 
 **Controller ↔ `sim` messages (internal).**
 
-- Commands: `cmd.start_round {scenario_id, seed}` (enters stepped pre-roll), `cmd.step {n}` (in player mode only during pre-roll; at any time in test mode; D-05), `cmd.resume`, `cmd.pause`, `cmd.action {action_id, type, target, params}`, `cmd.stop`, `cmd.test_inject {kind, duration_s}` (test mode only, D-10).
+- Commands: `cmd.start_round {scenario_id, seed}` (enters stepped pre-roll), `cmd.step {n}` (in player mode only during pre-roll; at any time in test mode; D-05), `cmd.resume`, `cmd.pause`, `cmd.action {action: {action_id, type, target, params}}` (nested, because the envelope's `type` names the command), `cmd.stop`, `cmd.test_inject {kind, duration_s}` (test mode only, D-10).
 - Events: `evt.tick`, `evt.action_applied`, `evt.heartbeat`, `evt.error`. (`evt.prealert_ready` was removed per D-05.) A disallowed command is answered with `evt.error` and has no effect.
 
 ### 12.3 Examples

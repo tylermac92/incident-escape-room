@@ -545,7 +545,7 @@
 - **Commands accepted:**
   - `cmd.start_round {scenario_id, seed}` (enters the stepped pre-roll phase)
   - `cmd.step {n}`, accepted in player mode **only while in pre-roll**, and at any time in test mode
-  - `cmd.resume`, `cmd.pause`, `cmd.action {action_id, type, target, params}`, `cmd.stop`
+  - `cmd.resume`, `cmd.pause`, `cmd.action {action: {action_id, type, target, params}}` (nested, because the envelope's `type` names the command), `cmd.stop`
   - `cmd.test_inject {kind, duration_s}`, test mode only (D-10)
 - **Events emitted:** `evt.tick` (one per simulated second), `evt.action_applied`, `evt.heartbeat` (1 Hz wall clock), `evt.error`. `evt.prealert_ready` is removed (D-05).
 - `evt.tick` contains the metrics, bad-event counts, statuses, and config snapshot, plus hidden fields (`fault.active`, `fault.neutralized`, scenario id) for the controller only.
