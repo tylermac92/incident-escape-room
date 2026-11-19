@@ -547,7 +547,7 @@
   - `cmd.step {n}`, accepted in player mode **only while in pre-roll**, and at any time in test mode
   - `cmd.resume`, `cmd.pause`, `cmd.action {action: {action_id, type, target, params}}` (nested, because the envelope's `type` names the command), `cmd.stop`
   - `cmd.test_inject {kind, duration_s}`, test mode only (D-10)
-- **Events emitted:** `evt.tick` (one per simulated second), `evt.action_applied`, `evt.heartbeat` (1 Hz wall clock), `evt.error`. `evt.prealert_ready` is removed (D-05).
+- **Events emitted:** `evt.tick` (one per simulated second), `evt.action_applied`, `evt.heartbeat` (1 Hz wall clock; carries `pack_version` and the pack's controller tuning, D-25), `evt.error`. `evt.prealert_ready` is removed (D-05).
 - `evt.tick` contains the metrics, bad-event counts, statuses, and config snapshot, plus hidden fields (`fault.active`, `fault.neutralized`, scenario id) for the controller only.
 - `/healthz` returns 200 only after the isolation self-check passes (ENV-07).
 - Malformed or disallowed commands (for example `cmd.step` during play in player mode) are answered with `evt.error` and have no effect on the simulation.
@@ -2379,6 +2379,7 @@
 | D-22 Same-second alert ties; either `api` rule may page in `pool_leak` and `retry_storm` | CTL-09, SCN-04, SCN-06, QA-02 |
 | D-23 Signature cells the model cannot meet as written | SCN-04, SCN-06, QA-02 |
 | D-24 `ledger.db` has 13 connections | SIM-05, SCN-04, SCN-06, SCN-09, REL-05, REL-06 |
+| D-25 Pack tuning travels in the heartbeat | SIM-10, CTL-02, CTL-05 |
 
 ---
 
@@ -2412,6 +2413,7 @@ All 18 questions from the previous version are now **decided**, and v3 adds D-19
 | **D-22** | New after v3: `pool_leak` and `retry_storm` start both `api` alert conditions within a second of each other | Same-second ties page in §9.6 table order. Either `api` rule may page in those two scenarios; the signature's page cell lists both. Thresholds stay at the TDD defaults. | With a 1 s client timeout, every `api` request slower than 1000 ms is a failed one, so the latency and error conditions coincide. Thresholds from 600 to 1000 ms were measured over 130–150 seeds and none gave each scenario its own page reliably. The other §7.2 cells still separate the scenarios. | CTL-09, SCN-04, SCN-06, QA-02 |
 | **D-23** | New after v3: signature cells the model cannot meet as written | At T0+60 s `ledger` throughput is ≤ 50 rps (below normal, reaching 0 only when every connection has leaked); the retry share ≤ 35% cell is dropped. | Once requests time out, two of every three `ledger` requests are `backoff` retries (retry share 0.6–0.75). Throughput level (≤ 50 versus ≥ 80 rps) separates `pool_leak` from `retry_storm`. In `retry_storm` the `api` error cell is ≥ 60% (about 75% measured), not ≥ 90%: orders, a quarter of `api` traffic, still get their 202. Its `worker` cell checks completions (≤ 6 jobs/s) and `jobs` depth, since some writes get through and a 10 s window can hold no `worker` errors. | SCN-04, SCN-06, QA-02 |
 | **D-24** | New after v3: `ledger` capacity margin | `ledger.db` has 13 connections (capacity about 130 rps, baseline about 32%). The pack sets it; tests pin the measured behaviour. | With 10, the post-fix load (3 attempts per timed-out read under `backoff`, plus `worker` draining its backlog at full speed) exceeded capacity, so `backoff` and `recycle_pool` usually failed to recover. With 13: the storm sustains in 30 of 30 seeds, `backoff` drains it in 5–24 s, the targeted `pool_leak` fix holds in every seed, and recycle alone recovers in about 5 of 6. At 14 or 15 the storm dissolves by itself. `pool_leak` pages a median of about 400 s after onset; revisit in REL-05/REL-06. | SIM-05, SCN-04, SCN-06, SCN-09, REL-05, REL-06 |
+| **D-25** | New after v3: how the controller gets the pack's tuning | `evt.heartbeat` carries `pack_version` and the pack's `controller` section. | The controller then keeps no copy of the pack, so `sim` and the controller can't disagree. Until a heartbeat has arrived, preparing a round returns `503 sim_unavailable`. | SIM-10, CTL-02, CTL-05 |
 
 ### Remaining open items
 
