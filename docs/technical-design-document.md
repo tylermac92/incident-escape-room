@@ -1013,7 +1013,7 @@ These examples use the default parameters, with the player acting at 60 s after 
 | Entity | Key fields | Lifetime |
 |---|---|---|
 | `Session` | `id`, `created_at`, `mode` (`standard` / `practice`, D-02), `status` (`in_progress` / `complete` / `abandoned`, D-13), `round_order[]` (scenario ids), `rounds[]` (round ids), `current_index` | Controller memory, mirrored to `/data/session.json` |
-| `Round` | `id`, `session_id`, `scenario_id`, `seed`, `attempt`, `state`, `t_onset_ms`, `t0_ms`, `time_limit_s`, `budget_total`, `budget_remaining`, `healthy_since_ms`, `outcome`, `ttr_s`, `abort_reason`, wall-clock phase times (`briefing_opened_at`, `on_call_at`, `debrief_opened_at`, `debrief_closed_at`, paused seconds; D-12) | In memory while live. A summary is stored after it ends. |
+| `Round` | `id`, `session_id`, `scenario_id`, `seed`, `attempt`, `state`, `t_onset_ms`, `t0_ms`, `time_limit_s`, `budget_total`, `budget_remaining`, `healthy_since_ms`, `outcome`, `ttr_s`, `premature_declarations`, `held`, `score`, `abort_reason`, wall-clock phase times (`briefing_opened_at`, `on_call_at`, `debrief_opened_at`, `debrief_closed_at`, paused seconds; D-12) | In memory while live. A summary is stored after it ends. |
 | `ScenarioDefinition` | `id`, `title`, `parameters`, `fault_script`, `signature`, `effect_matrix`, `debrief_copy` | Static YAML built into the images |
 | `MetricSample` | `t_ms`, `service`, `metric`, `labels{}`, `value` | Memory ring buffer (15 min); never persisted |
 | `HealthCheckStatus` | `id`, `passing`, `value`, `threshold` | Memory |

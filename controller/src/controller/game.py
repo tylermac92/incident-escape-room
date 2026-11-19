@@ -27,6 +27,7 @@ from controller.alerts import Alerts
 from controller.errors import ApiError
 from controller.feed import Feed
 from controller.health import Health
+from controller.scoring import score
 from controller.impact import Impact
 from controller.link import HEARTBEAT_TIMEOUT_S, LinkDown
 
@@ -76,6 +77,8 @@ class Round:
     outcome: str | None = None  # recovered, recovered_undeclared, not_recovered (§11.3)
     ttr_s: float | None = None  # healthy_since - T0 for the period that counted (CTL-06)
     premature_declarations: int = 0  # rejected declare-resolved calls (CTL-14)
+    held: bool | None = None  # the root cause was neutralized at the end of the round (§6.4)
+    score: dict | None = None  # components and total (CTL-15); aborted rounds have none
     abort_reason: str | None = None
     # Wall-clock phase times, UTC (D-12).
     briefing_opened_at: str | None = None
@@ -347,7 +350,12 @@ class Game:
             self._finish(rnd)
 
     def _finish(self, rnd: Round) -> None:
-        """RESOLVED, TIMED_OUT or ENDED -> DEBRIEF."""
+        """RESOLVED, TIMED_OUT or ENDED -> DEBRIEF, with the score."""
+        rnd.held = self._tick["hidden"]["fault"]["neutralized"]
+        rnd.score = score(self.link.config["score"], outcome=rnd.outcome, mode=rnd.mode, ttr_s=rnd.ttr_s,
+                          impact_b=self.impact.scored, neutralized=rnd.held, budget_remaining=rnd.budget_remaining,
+                          budget_total=rnd.budget_total, time_limit_s=rnd.time_limit_s, actions=self.actions,
+                          premature=rnd.premature_declarations)
         self._move(rnd, "DEBRIEF")
         self.save()
 
@@ -532,7 +540,8 @@ class Game:
     def view(self, rnd: Round) -> dict:
         """GET /api/rounds/{id}: never the seed; the scenario and onset only from the debrief (§3.2)."""
         # healthy_since would let the UI show a countdown, which §6.4 rules out.
-        hidden = ("seed", "session_id") + (() if rnd.state == "DEBRIEF" else ("scenario_id", "t_onset_ms", "healthy_since_ms"))
+        hidden = ("seed", "session_id") + (() if rnd.state == "DEBRIEF" else
+                                           ("scenario_id", "t_onset_ms", "healthy_since_ms", "held", "score"))
         out = {k: v for k, v in dataclasses.asdict(rnd).items() if k not in hidden}
         live = rnd is self.session.current_round and self._tick is not None
         t_ms = self._tick["sim_time_ms"] if live else None

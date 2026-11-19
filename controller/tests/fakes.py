@@ -53,6 +53,7 @@ class FakeSim:
         self.sim_config = {"flags": {"receipt_export": True, "checkout_banner": True},
                            "retry_policy": {"api": "backoff", "worker": "backoff"}}
         self.pending: dict = {}  # action_id -> (future, apply at t_ms)
+        self.neutralized = False
 
     async def action(self, action):
         self.sent.append({"type": "cmd.action", "action": action})
@@ -88,7 +89,8 @@ class FakeSim:
             self.events.put_nowait({
                 "type": "evt.tick", "sim_time_ms": self.t_ms, "services": out, "config": self.sim_config,
                 "bad_events": {"counts": self.bad(self.t_ms), "weights": WEIGHTS},
-                "hidden": {"scenario_id": "x", "fault": {"active": self.t_ms > ONSET_MS, "onset_ms": ONSET_MS}}})
+                "hidden": {"scenario_id": "x", "fault": {"active": self.t_ms > ONSET_MS, "onset_ms": ONSET_MS,
+                                                          "neutralized": self.neutralized}}})
 
     async def _playing(self):
         while True:
