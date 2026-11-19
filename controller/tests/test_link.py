@@ -10,7 +10,8 @@ from controller import link as link_module
 from controller.link import Link, LinkDown
 
 PASS = {"status": "pass", "failed": []}
-BEAT = {"type": "evt.heartbeat", "isolation": PASS, "pack_version": "1.0.0", "controller": {"budget": 12}}
+BEAT = {"type": "evt.heartbeat", "isolation": PASS, "pack_version": "1.0.0", "controller": {"budget": 12},
+        "effect_matrices": {}}
 
 
 def run(sim, check):

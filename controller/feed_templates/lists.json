@@ -1,0 +1,10 @@
+{
+  "_note": "SEC-05: fictional people, products and places only. Draft; content sign-off is SEC-06 (D-03).",
+  "brand": "Larkspur Goods",
+  "names": ["Mira T.", "Odell K.", "Priya S.", "Jonah W.", "Elsie R.", "Tomas B.", "Wren H.", "Anika L.",
+            "Callum P.", "Rosa D.", "Felix N.", "Juniper A.", "Hollis M.", "Ines F.", "Bram O.", "Talia G."],
+  "products": ["beeswax candle set", "linen tea towels", "stoneware mug", "cedar soap dish", "wool throw",
+               "copper watering can", "herb seed kit", "walnut cutting board", "glass storage jars", "cotton tote"],
+  "cities": ["Fernhollow", "Port Ambrel", "Millbrook Falls", "Saltmere", "Quillan", "Eastvale Crossing",
+             "Brindle Bay", "Harrowgate", "Lowen Ridge", "Tamsin Cove"]
+}

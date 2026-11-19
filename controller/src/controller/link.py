@@ -2,7 +2,7 @@
 
 One WebSocket to the constant address ws://sim:9000/link, opened only after `sim` resolves inside
 a directly connected subnet. Heartbeats carry sim's isolation result and the pack's controller
-tuning (D-25). Ticks and errors go to `events` for the round; `evt.action_applied` resolves the
+tuning and effect matrices (D-25). Ticks and errors go to `events` for the round; `evt.action_applied` resolves the
 future `action()` returned. If heartbeats stop for more than 3 s the link closes itself, and every
 close puts a `link.down` event on the queue, because sim's round died with the connection.
 """
@@ -51,6 +51,7 @@ class Link:
         self.sim_isolation: dict | None = None  # sim's own self-check, from its latest heartbeat
         self.config: dict | None = None  # the scenario pack's `controller` section (D-25)
         self.pack_version: str | None = None
+        self.effect_matrices: dict | None = None  # scenario id -> the pack's effect matrix (D-25)
         self.events: asyncio.Queue = asyncio.Queue()  # evt.tick, evt.error, link.down
         self._ws = None
         self._actions: dict[str, asyncio.Future] = {}
@@ -92,8 +93,9 @@ class Link:
             result = event.get("isolation")
             ok = isinstance(result, dict) and isinstance(result.get("failed"), list)
             self.sim_isolation = result if ok else {"status": "fail", "failed": ["malformed"]}
-            if isinstance(event.get("controller"), dict):
+            if isinstance(event.get("controller"), dict) and isinstance(event.get("effect_matrices"), dict):
                 self.config, self.pack_version = event["controller"], event.get("pack_version")
+                self.effect_matrices = event["effect_matrices"]
         elif kind == "evt.action_applied":
             future = self._actions.pop(event.get("action_id"), None)
             if future is not None and not future.done():

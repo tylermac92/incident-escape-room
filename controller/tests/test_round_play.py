@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from fakes import ONSET_MS, FakeSim, services
+from fakes import CONTENT, ONSET_MS, FakeSim, services
 
 from controller.game import Game
 
@@ -20,6 +20,7 @@ def play(script, tmp_path, mode="standard", until=lambda game, rnd: rnd.state ==
     async def main():
         link = FakeSim(script, bad)
         game = Game(link, lambda: False, tmp_path / "session.json")
+        game.content = CONTENT
         await game.new_session(mode)
         rnd = await game.prepare()
         while rnd.state == "PREPARING":

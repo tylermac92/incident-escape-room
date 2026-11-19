@@ -16,7 +16,7 @@ EDGES = {("PREPARING", "BRIEFING"), ("PREPARING", "ABORTED"), ("BRIEFING", "ACTI
          ("ACTIVE", "PAUSED"), ("PAUSED", "ACTIVE"), ("ACTIVE", "RESOLVED"), ("ACTIVE", "TIMED_OUT"),
          ("ACTIVE", "ABORTED"), ("PAUSED", "ABORTED"), ("RESOLVED", "DEBRIEF"), ("TIMED_OUT", "DEBRIEF"),
          ("ENDED", "DEBRIEF"), ("ACTIVE", "ENDED"), ("PAUSED", "ENDED")}
-CONFIG = {"budget": 12, "round_time_limit_s": 720, "alerts": {"api_error_rate_pct": 5, "api_latency_p95_ms": 1000,
+CONFIG = {"budget": 12, "round_time_limit_s": 720, "feed": {"interval_s": 5, "min_count": 5}, "alerts": {"api_error_rate_pct": 5, "api_latency_p95_ms": 1000,
                                                              "orders_backlog": 500, "for_s": 30}}
 
 

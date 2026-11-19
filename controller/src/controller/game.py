@@ -22,9 +22,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from controller import actions as catalog
 from controller.alerts import Alerts
 from controller.errors import ApiError
+from controller.feed import Feed
 from controller.health import Health
+from controller.scoring import score
 from controller.impact import Impact
 from controller.link import HEARTBEAT_TIMEOUT_S, LinkDown
 
@@ -73,6 +76,9 @@ class Round:
     healthy_since_ms: int | None = None
     outcome: str | None = None  # recovered, recovered_undeclared, not_recovered (§11.3)
     ttr_s: float | None = None  # healthy_since - T0 for the period that counted (CTL-06)
+    premature_declarations: int = 0  # rejected declare-resolved calls (CTL-14)
+    held: bool | None = None  # the root cause was neutralized at the end of the round (§6.4)
+    score: dict | None = None  # components and total (CTL-15); aborted rounds have none
     abort_reason: str | None = None
     # Wall-clock phase times, UTC (D-12).
     briefing_opened_at: str | None = None
@@ -143,6 +149,10 @@ class Game:
         self._health: Health | None = None
         self.checks: list[dict] = []  # the latest health-check results (CTL-08)
         self.impact: Impact | None = None  # the current round's impact accounting (CTL-10)
+        self.content: dict | None = None  # feed templates and fictional lists, loaded at startup (CTL-11)
+        self.feed: Feed | None = None
+        self.actions: list[dict] = []  # the current round's PlayerAction log (CTL-12, CTL-13)
+        self._requests: dict = {}  # client_request_id -> the original response or ApiError
 
     def save(self) -> None:
         if self.session is None:
@@ -251,6 +261,8 @@ class Game:
         self._stop_runner()
         self._tick, self._alerts, self.events = None, Alerts(config["alerts"]), []
         self._health, self.checks, self.impact = Health(), [], Impact()
+        self.feed = Feed(rnd.seed, self.content, config["feed"])
+        self.actions, self._requests = [], {}
         self._log("state_change", **{"from": None, "to": rnd.state})
         self._task = asyncio.get_running_loop().create_task(self._run(rnd, retry))
         return rnd
@@ -316,6 +328,7 @@ class Game:
             self._log("alert", **{k: alert[k] for k in ("rule_id", "state", "is_page")})
         bad = event["bad_events"]
         self.impact.add(bad["counts"], bad["weights"], after_t0=rnd.t0_ms is not None and t_ms > rnd.t0_ms)
+        self.feed.add(t_ms, bad["counts"], all(c["passing"] for c in self.checks), not fault["active"], rnd.t0_ms)
         if rnd.state == "ACTIVE":
             self._update(rnd, t_ms)
         return None
@@ -334,8 +347,42 @@ class Game:
             rnd.outcome = "recovered_undeclared" if stable else "not_recovered"
             rnd.ttr_s = (rnd.healthy_since_ms - rnd.t0_ms) / 1000 if stable else None
             self._move(rnd, "TIMED_OUT")
-            self._move(rnd, "DEBRIEF")
-            self.save()
+            self._finish(rnd)
+
+    def _finish(self, rnd: Round) -> None:
+        """RESOLVED, TIMED_OUT or ENDED -> DEBRIEF, with the score."""
+        rnd.held = self._tick["hidden"]["fault"]["neutralized"]
+        rnd.score = score(self.link.config["score"], outcome=rnd.outcome, mode=rnd.mode, ttr_s=rnd.ttr_s,
+                          impact_b=self.impact.scored, neutralized=rnd.held, budget_remaining=rnd.budget_remaining,
+                          budget_total=rnd.budget_total, time_limit_s=rnd.time_limit_s, actions=self.actions,
+                          premature=rnd.premature_declarations)
+        self._move(rnd, "DEBRIEF")
+        self.save()
+
+    async def declare(self, round_id: str) -> Round:
+        """POST /api/rounds/{id}/declare-resolved (CTL-14, §6.4)."""
+        rnd = self._current(round_id, ("ACTIVE",))
+        required_s = self.link.config["stability_window_s"]
+        stable = rnd.healthy_since_ms is not None
+        green_s = (self._tick["sim_time_ms"] - rnd.healthy_since_ms) // 1000 if stable else 0
+        if stable and green_s >= required_s:
+            rnd.outcome, rnd.ttr_s = "recovered", (rnd.healthy_since_ms - rnd.t0_ms) / 1000
+            self._log("declaration", accepted=True)
+            self._move(rnd, "RESOLVED")
+            self._finish(rnd)
+            self._stop_runner()
+            await self._stop_sim()
+            return rnd
+        weights = self.link.config["score"]
+        rnd.premature_declarations += 1
+        penalty = weights["premature"] if rnd.premature_declarations <= weights["premature_max_count"] else 0
+        failing = [c["id"] for c in self.checks if not c["passing"]]
+        self._log("declaration", accepted=False, green_for_s=green_s, failing_checks=failing)
+        self.save()
+        message = (f"Not yet — {len(failing)} health check{'s are' if len(failing) > 1 else ' is'} failing." if failing
+                   else f"Not yet — health checks have been green for {green_s} of the required {required_s} seconds.")
+        raise ApiError(409, "not_stable", message, {"green_for_s": green_s, "required_s": required_s,
+                                                     "penalty": penalty, "failing_checks": failing})
 
     async def start(self, round_id: str) -> Round:
         rnd = self._current(round_id, ("BRIEFING",))
@@ -371,9 +418,97 @@ class Game:
             await self._abort(rnd, "player_restart")
         return self._begin(rnd.scenario_id, rnd.attempt + 1)
 
-    def _log(self, kind: str, **payload) -> None:
-        """Append to the current round's event log: seq strictly increasing, stamped with sim time."""
-        t_ms = self._tick["sim_time_ms"] if self._tick else 0
+    # Actions (CTL-12, CTL-13)
+
+    async def act(self, round_id: str, request: dict) -> dict:
+        """POST /api/rounds/{id}/actions. A repeated client_request_id gets the original answer, uncharged."""
+        if (why := catalog.invalid(request["type"], request.get("target"), request.get("params") or {})) is not None:
+            raise ApiError(422, "invalid_request", why)  # a schema error: not an attempt, so not logged
+        rnd = self.round(round_id)
+        prior = self._requests.get(request["client_request_id"]) if rnd is self.session.current_round else None
+        if isinstance(prior, ApiError):
+            raise prior
+        if prior is not None:
+            return prior
+        try:
+            response = await self._accept(rnd, request)
+        except ApiError as e:
+            if e.code != "sim_unavailable":  # the link may be back on a retry
+                self._requests[request["client_request_id"]] = e
+            if rnd is self.session.current_round and self._tick is not None:
+                self.actions.append(self._new_action(request, None, "rejected") | {"reject_reason": e.code})
+            raise
+        self._requests[request["client_request_id"]] = response
+        return response
+
+    def _new_action(self, request: dict, cost: int | None, status: str) -> dict:
+        t_ms = self._tick["sim_time_ms"]
+        delay_ms = catalog.CATALOG[request["type"]]["delay_s"] * 1000
+        return {"id": f"a_{len(self.actions) + 1:04d}", "client_request_id": request["client_request_id"],
+                "type": request["type"], "target": request.get("target"), "params": request.get("params") or {},
+                "cost": cost, "status": status, "reject_reason": None, "submitted_at_ms": t_ms,
+                "effective_at_ms": t_ms + delay_ms, "effect_class": None}
+
+    def public_action(self, rnd: Round, action: dict) -> dict:
+        """effect_class is revealed only in the debrief (QA-07)."""
+        return action if rnd.state == "DEBRIEF" else {k: v for k, v in action.items() if k != "effect_class"}
+
+    async def _accept(self, rnd: Round, request: dict) -> dict:
+        kind, target, params = request["type"], request.get("target"), request.get("params") or {}
+        if rnd is not self.session.current_round or rnd.state != "ACTIVE":
+            raise ApiError(409, "invalid_state", f"Actions can only be run while the round is ACTIVE, not {rnd.state}.")
+        cost = self.link.config["action_costs"][kind]
+        if rnd.budget_remaining < cost:
+            raise ApiError(409, "insufficient_budget",
+                           f"{catalog.CATALOG[kind]['label']} costs {cost} points; you have {rnd.budget_remaining} left.",
+                           {"cost": cost, "budget_remaining": rnd.budget_remaining})
+        services, config = self._tick["services"], self._tick["config"]
+        if any(services[name]["status"] == "Restarting" for name in catalog.needs_up(kind, target)):
+            raise ApiError(409, "target_unavailable", "That service is restarting.")
+        if target == "jobs" and services["worker"]["queue_depth"]["jobs"] == 0:
+            raise ApiError(409, "target_unavailable", "jobs is empty.")
+        pending = [a for a in self.actions if a["status"] == "pending"]
+        if any(a["type"] == "restart_all" or a["target"] == target for a in pending) or (kind == "restart_all" and pending):
+            raise ApiError(409, "action_in_progress", "An action on that target is still in progress.")
+        current = {"set_feature_flag": lambda: config["flags"][target] == params["enabled"],
+                   "set_retry_policy": lambda: config["retry_policy"][target] == params["mode"]}.get(kind)
+        if current and current():
+            raise ApiError(409, "no_change", "That is already the current setting.")
+        action = self._new_action(request, cost, "pending")
+        action["effect_class"] = catalog.effect_class(self.link.effect_matrices[rnd.scenario_id], kind, target, params)
+        try:
+            applied = await self.link.action({"action_id": action["id"], "type": kind, "target": target, "params": params})
+        except LinkDown:
+            raise ApiError(503, "sim_unavailable", "The link to the simulation is down.") from None
+        applied.add_done_callback(lambda future: self._applied(action, future))
+        rnd.budget_remaining -= cost  # charged on acceptance, before the delay (§10.3)
+        self.actions.append(action)
+        self._log("action", id=action["id"], type=kind, target=target, status="pending")
+        self.save()
+        return {"action": self.public_action(rnd, action), "budget_remaining": rnd.budget_remaining,
+                "sandbox_target": catalog.sandbox_target(target)}
+
+    def _applied(self, action: dict, future) -> None:
+        """evt.action_applied arrived (pending -> completed), or the link dropped first (refunded)."""
+        if action["status"] != "pending" or action not in self.actions:
+            return
+        if future.cancelled():
+            self._refund(action)
+            return
+        action["status"], action["effective_at_ms"] = "completed", future.result()
+        self._log("action", action["effective_at_ms"], id=action["id"], type=action["type"], target=action["target"],
+                  status="completed")
+
+    def _refund(self, action: dict) -> None:
+        """sim never applied it: give the cost back (§10.3). The round is aborted by the link.down (CTL-20)."""
+        action["status"] = "refunded"
+        self.session.current_round.budget_remaining += action["cost"]
+        self._log("action", id=action["id"], type=action["type"], target=action["target"], status="refunded")
+
+    def _log(self, kind: str, t_ms: int | None = None, **payload) -> None:
+        """Append to the current round's event log: seq strictly increasing, stamped with sim time
+        (the latest tick's, unless sim reported the event's own time)."""
+        t_ms = t_ms if t_ms is not None else self._tick["sim_time_ms"] if self._tick else 0
         self.events.append({"seq": len(self.events) + 1, "sim_time_ms": t_ms, "kind": kind, "payload": payload})
 
     def _move(self, rnd: Round, to: str, abort_reason: str | None = None) -> None:
@@ -389,6 +524,9 @@ class Game:
     async def _abort(self, rnd: Round, reason: str) -> None:
         self._stop_runner()
         self._move(rnd, "ABORTED", reason)
+        for action in self.actions:
+            if action["status"] == "pending":
+                self._refund(action)
         self._unpause(rnd)
         self.save()
         await self._stop_sim()
@@ -401,7 +539,9 @@ class Game:
 
     def view(self, rnd: Round) -> dict:
         """GET /api/rounds/{id}: never the seed; the scenario and onset only from the debrief (§3.2)."""
-        hidden = ("seed", "session_id") + (() if rnd.state == "DEBRIEF" else ("scenario_id", "t_onset_ms"))
+        # healthy_since would let the UI show a countdown, which §6.4 rules out.
+        hidden = ("seed", "session_id") + (() if rnd.state == "DEBRIEF" else
+                                           ("scenario_id", "t_onset_ms", "healthy_since_ms", "held", "score"))
         out = {k: v for k, v in dataclasses.asdict(rnd).items() if k not in hidden}
         live = rnd is self.session.current_round and self._tick is not None
         t_ms = self._tick["sim_time_ms"] if live else None
@@ -411,5 +551,7 @@ class Game:
             "health_checks": self.checks if live else [],
             "alerts": list(self._alerts.alerts.values()) if live else [],
             "impact": self.impact.counters() if live else None,
+            "feed": self.feed.items if live else [],
+            "actions": [self.public_action(rnd, a) for a in self.actions] if live else [],
             "statuses": {name: s["status"] for name, s in self._tick["services"].items()} if live else {},
         }

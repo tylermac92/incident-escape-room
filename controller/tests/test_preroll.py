@@ -7,10 +7,11 @@ import pytest
 from controller import game as game_module
 from controller.game import Game
 from controller.link import LinkDown
-from fakes import ONSET_MS, FakeSim, after_onset, services
+from fakes import CONTENT, ONSET_MS, FakeSim, after_onset, services
 
 async def prepared(link, locked=lambda: False, tmp=None):
     game = Game(link, locked, tmp / "session.json")
+    game.content = CONTENT
     await game.new_session("standard")
     await game.prepare()
     while True:  # until the pre-roll (and its one retry) has finished

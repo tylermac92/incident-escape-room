@@ -180,7 +180,8 @@ async def link(ws: ServerConnection) -> None:
         while True:
             pack = state["pack"]  # its controller tuning rides along, so the controller needs no copy (D-25)
             out.put_nowait({"type": "evt.heartbeat", "isolation": state["isolation"],
-                            "pack_version": pack and pack.version, "controller": pack and pack.controller})
+                            "pack_version": pack and pack.version, "controller": pack and pack.controller,
+                            "effect_matrices": pack and {sid: sc["effect_matrix"] for sid, sc in pack.scenarios.items()}})
             if not healthy():
                 return
             await asyncio.sleep(HEARTBEAT_INTERVAL_S)
