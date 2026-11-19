@@ -759,7 +759,7 @@
 **Acceptance criteria**
 - `GET /api/health/live` returns 200 while the process is running.
 - `GET /api/health/ready` returns 200 only when isolation is `pass` (its own check and `sim`'s) and the link to `sim` is up. Otherwise it returns 503 with a body naming the failing condition.
-- Every error uses the envelope `{"error":{"code","message","details"}}` with the codes in §12.4 plus `session_complete` (409, D-13): `invalid_request` (400/422), `not_found` (404), `invalid_state`, `action_in_progress`, `no_change`, `insufficient_budget`, `target_unavailable`, `not_stable`, `session_complete` (409), `locked` (423), `sim_unavailable` (503).
+- Every error uses the envelope `{"error":{"code","message","details"}}` with the codes in §12.4 plus `session_complete` (409, D-13): `invalid_request` (400/422), `not_found` (404), `invalid_state`, `action_in_progress`, `no_change`, `insufficient_budget`, `target_unavailable`, `not_stable`, `session_complete` (409), `locked` (423), `sim_unavailable` (503), and `internal_error` (500) for a controller bug.
 - The controller's runtime isolation self-check (ENV-07) runs at startup and every 60 s.
 
 **Dependencies:** ENV-01, ENV-07

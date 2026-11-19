@@ -82,6 +82,13 @@ async def validation_error(_request: Request, exc: RequestValidationError) -> JS
     return envelope(422, "invalid_request", "The request is not valid.", {"errors": exc.errors()})
 
 
+@app.exception_handler(Exception)
+async def internal_error(_request: Request, exc: Exception) -> JSONResponse:
+    # A bug, not a player error: still the envelope, never a stack trace (§12.4).
+    print(f"controller: unhandled {exc!r}", flush=True)
+    return envelope(500, "internal_error", "Something went wrong in the game controller.")
+
+
 @app.get("/api/health/live")
 def live() -> dict:
     return {"status": "live"}

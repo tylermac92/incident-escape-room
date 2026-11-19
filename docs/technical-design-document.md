@@ -1139,6 +1139,7 @@ Content-Type: application/json
 | 409 | `session_complete` | All three rounds are done and another round was requested (D-13) |
 | 423 | `locked` | An isolation check failed (§5.6) |
 | 503 | `sim_unavailable` | The link to `sim` is down |
+| 500 | `internal_error` | A bug in the controller; the body never contains a stack trace |
 
 Actions are idempotent by `client_request_id`: a repeated submission returns the original result and is not charged twice.
 
