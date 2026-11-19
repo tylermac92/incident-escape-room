@@ -64,6 +64,18 @@ def test_unknown_path_uses_envelope(client):
     assert error(client.get("/nope")) == (404, "not_found")
 
 
+def test_unhandled_error_uses_envelope(client):
+    @app_module.app.get("/api/test-boom")
+    def boom():
+        raise RuntimeError("boom")
+
+    try:
+        response = TestClient(app_module.app, raise_server_exceptions=False).get("/api/test-boom")
+    finally:
+        app_module.app.router.routes.pop()
+    assert error(response) == (500, "internal_error")
+
+
 def test_is_internal():
     assert is_internal("172.18.0.3", ROUTES)
     assert not is_internal("10.1.2.3", ROUTES)   # reachable only through a gateway

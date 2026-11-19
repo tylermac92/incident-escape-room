@@ -178,8 +178,9 @@ async def link(ws: ServerConnection) -> None:
 
     async def heartbeats():
         while True:
+            pack = state["pack"]  # its controller tuning rides along, so the controller needs no copy (D-25)
             out.put_nowait({"type": "evt.heartbeat", "isolation": state["isolation"],
-                            "pack_version": state["pack"] and state["pack"].version})
+                            "pack_version": pack and pack.version, "controller": pack and pack.controller})
             if not healthy():
                 return
             await asyncio.sleep(HEARTBEAT_INTERVAL_S)

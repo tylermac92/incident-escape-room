@@ -424,6 +424,7 @@ stateDiagram-v2
   PREPARING --> BRIEFING: pre-roll reached the alert instant
   PREPARING --> ABORTED: sim error or isolation failure
   BRIEFING --> ACTIVE: player clicks Go on call
+  BRIEFING --> ABORTED: sim error or isolation failure
   ACTIVE --> PAUSED: pause
   PAUSED --> ACTIVE: resume
   ACTIVE --> RESOLVED: declaration accepted
@@ -1047,7 +1048,7 @@ No user, account, or player-name entity exists, because none is needed.
 **Controller ↔ `sim` messages (internal).**
 
 - Commands: `cmd.start_round {scenario_id, seed}` (enters stepped pre-roll), `cmd.step {n}` (in player mode only during pre-roll; at any time in test mode; D-05), `cmd.resume`, `cmd.pause`, `cmd.action {action: {action_id, type, target, params}}` (nested, because the envelope's `type` names the command), `cmd.stop`, `cmd.test_inject {kind, duration_s}` (test mode only, D-10).
-- Events: `evt.tick`, `evt.action_applied`, `evt.heartbeat`, `evt.error`. (`evt.prealert_ready` was removed per D-05.) A disallowed command is answered with `evt.error` and has no effect.
+- Events: `evt.tick`, `evt.action_applied`, `evt.heartbeat` (with `pack_version` and the pack's controller tuning, D-25), `evt.error`. (`evt.prealert_ready` was removed per D-05.) A disallowed command is answered with `evt.error` and has no effect.
 
 ### 12.3 Examples
 
@@ -1139,6 +1140,7 @@ Content-Type: application/json
 | 409 | `session_complete` | All three rounds are done and another round was requested (D-13) |
 | 423 | `locked` | An isolation check failed (§5.6) |
 | 503 | `sim_unavailable` | The link to `sim` is down |
+| 500 | `internal_error` | A bug in the controller; the body never contains a stack trace |
 
 Actions are idempotent by `client_request_id`: a repeated submission returns the original result and is not charged twice.
 
@@ -1342,3 +1344,4 @@ These decisions resolve the open questions in §17 and the gaps found during tic
 | D-22 | **Same-second alert ties, and which `api` rule pages.** Rules that fire in the same second page in §9.6 table order (`api_error_rate_high`, `api_latency_high`, `orders_backlog_high`). `pool_leak` and `retry_storm` may page on either `api` rule: their signature's page cell lists both. With a 1 s client timeout, every `api` request slower than 1000 ms is a failed one, recorded when it fails, so the latency and error conditions start within a second of each other in both scenarios. Thresholds from 600 to 1000 ms were measured over 130–150 seeds and none separated the two reliably. The other §7.2 cells still separate the scenarios. | §7.2, §9.6 |
 | D-23 | **Signature cells at T0+60 s that the model cannot meet as written.** In `pool_leak`, `ledger` throughput is at or below normal (≤ 50 rps; it reaches 0 only once every connection has leaked) rather than near 0, and the "retry share ≤ 35%" cell is dropped: once requests time out, two of every three `ledger` requests are `backoff` retries. Throughput level (≤ 50 versus ≥ 80 rps), not retry share, separates `pool_leak` from `retry_storm`. In `retry_storm`, `api` errors are about 75% rather than 90% or more, because orders (a quarter of `api` traffic) still get their 202; the cell is ≥ 60%. Its `worker` cell checks completions (≤ 6 jobs/s) and `jobs` depth rather than the main error reason, because some writes get through and a 10 s window can hold no `worker` errors at all. | §7.2, §7.5 |
 | D-24 | **`ledger.db` has 13 connections** (was 10): capacity about 130 rps, baseline about 4 in use (32%). With 10, the backlog left behind by a fix kept `ledger` overloaded even under `backoff`: every timed-out read made 3 attempts and `worker` drained its backlog at full speed, together more than 10 connections' worth. So `set_retry_policy(api, backoff)` and `recycle_pool` usually failed to recover the system. With 13 (measured): the storm still sustains under `aggressive` (30 of 30 seeds), `backoff` drains it 5–24 s after taking effect (median about 7 s), flag-off-plus-recycle recovers and holds in every seed, and recycle alone recovers for 2–8 min in about 5 of 6 seeds. At 14 the storm dissolved by itself in 2 of 30 seeds, and at 15 in every seed. `pool_leak` now pages a median of about 400 s after onset (TDD: about 285 s); REL-05/REL-06 should revisit both. Signature cells read 13/13 wherever §7 says 10/10. | §7.1, §7.2, §7.3, §7.5, §8.3, §8.7 |
+| D-25 | **The controller gets the pack's tuning from `sim`'s heartbeat.** Every `evt.heartbeat` carries `pack_version` and the pack's `controller` section (alert thresholds, budget, time limit, costs, score weights). The controller keeps no copy of the pack, so the two services can't disagree about tuning. Until a heartbeat has delivered it, preparing a round returns `503 sim_unavailable`. | §4.5, §12.2 |

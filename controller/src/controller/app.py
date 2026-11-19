@@ -7,13 +7,17 @@ code says why: `locked` when an isolation check failed, `sim_unavailable` when t
 import asyncio
 import contextlib
 from pathlib import Path
+from typing import Literal
 
 import isolation
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict
 from starlette.exceptions import HTTPException
 
+from controller.errors import ApiError
+from controller.game import Game
 from controller.link import Link
 
 CHECK_INTERVAL_S = 60
@@ -23,11 +27,7 @@ HOST_LOCK = Path("/tmp/escape-host-lock")
 # Fail closed until the startup check has run.
 state = {"isolation": {"status": "fail", "failed": ["not_run"]}}
 link = Link()
-
-
-class ApiError(Exception):
-    def __init__(self, status: int, code: str, message: str, details: dict | None = None):
-        self.status, self.code, self.message, self.details = status, code, message, details or {}
+game = Game(link, locked=lambda: isolation_result()["status"] != "pass")
 
 
 def envelope(status: int, code: str, message: str, details: dict | None = None) -> JSONResponse:
@@ -54,6 +54,7 @@ async def recheck_isolation() -> None:
 
 @contextlib.asynccontextmanager
 async def lifespan(_app: FastAPI):
+    game.load()
     state["isolation"] = isolation.run()
     print(f"controller: isolation {state['isolation']}", flush=True)
     tasks = [asyncio.create_task(recheck_isolation()), asyncio.create_task(link.run())]
@@ -82,6 +83,13 @@ async def validation_error(_request: Request, exc: RequestValidationError) -> JS
     return envelope(422, "invalid_request", "The request is not valid.", {"errors": exc.errors()})
 
 
+@app.exception_handler(Exception)
+async def internal_error(_request: Request, exc: Exception) -> JSONResponse:
+    # A bug, not a player error: still the envelope, never a stack trace (§12.4).
+    print(f"controller: unhandled {exc!r}", flush=True)
+    return envelope(500, "internal_error", "Something went wrong in the game controller.")
+
+
 @app.get("/api/health/live")
 def live() -> dict:
     return {"status": "live"}
@@ -96,3 +104,41 @@ def ready() -> dict:
     if not link.up():
         raise ApiError(503, "sim_unavailable", "The link to the simulation is down.")
     return {"status": "ready", "isolation": "pass", "sim_link": "up"}
+
+
+class NewSession(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["standard", "practice"] = "standard"
+
+
+@app.post("/api/sessions", status_code=201)
+async def create_session(body: NewSession | None = None) -> dict:
+    async with game.lock:
+        return (await game.new_session((body or NewSession()).mode)).summary()
+
+
+@app.get("/api/sessions/current")
+def current_session() -> dict:
+    return game.current().summary()
+
+
+@app.post("/api/sessions/current/complete")
+def complete_session() -> dict:
+    return game.complete().summary()
+
+
+@app.post("/api/sessions/current/rounds", status_code=201)
+async def prepare_round() -> dict:
+    async with game.lock:
+        return game.view(await game.prepare())
+
+
+@app.get("/api/rounds/{round_id}")
+def get_round(round_id: str) -> dict:
+    return game.view(game.round(round_id))
+
+
+@app.post("/api/rounds/{round_id}/{verb}")
+async def lifecycle(round_id: str, verb: Literal["start", "pause", "resume", "restart"]) -> dict:
+    async with game.lock:
+        return game.view(await getattr(game, verb)(round_id))
