@@ -9,10 +9,10 @@ from sim.jobs import Jobs, Message
 from sim.metrics import Metrics, percentile
 
 
-def services(responses=(), calls=(), attempts=(), api_peak=0, worker_peak=0, db_peak=0):
-    api = NS(responses=list(responses), clients_peak=api_peak, status="Up")
-    ledger = NS(completed=list(calls), peak_in_use=db_peak, status="Up", queue=[1, 2, 3], pool_size=10)
-    worker = NS(attempts=list(attempts), clients_peak=worker_peak, status="Crash-looping")
+def services(responses=(), calls=(), attempts=(), api_used=0, worker_used=0, db_used=0):
+    api = NS(responses=list(responses), pool_used=api_used, status="Up")
+    ledger = NS(completed=list(calls), pool_used=db_used, status="Up", queue=[1, 2, 3], pool_size=10)
+    worker = NS(attempts=list(attempts), pool_used=worker_used, status="Crash-looping")
     return api, ledger, worker
 
 
@@ -57,18 +57,18 @@ def test_throughput_breakdowns():
     assert m["worker"]["errors_pct_by_reason"] == {"crash": 50.0}
 
 
-def test_samples_statuses_and_pool_maximum_within_the_second():
+def test_samples_statuses_and_pool_mean_within_the_second():
     metrics, jobs = Metrics(), Jobs()
     for _ in range(4):
         jobs.put(Message(0))
     jobs.take()
-    api, ledger, worker = services(api_peak=12, worker_peak=3, db_peak=9)
+    api, ledger, worker = services(api_used=12, worker_used=3, db_used=9)
     metrics.record(api, ledger, worker)
-    api.clients_peak, ledger.peak_in_use = 47, 4  # a later step in the same second
+    api.pool_used, ledger.pool_used = 47, 4  # a later step in the same second
     metrics.record(api, ledger, worker)
     m = metrics.tick(api, ledger, worker, jobs)
-    assert m["api"]["pool_in_use"] == {"api.ledger_client": {"used": 47, "max": 50}}
-    assert m["ledger"]["pool_in_use"] == {"ledger.db": {"used": 9, "max": 10}}
+    assert m["api"]["pool_in_use"] == {"api.ledger_client": {"used": 29.5, "max": 50}}  # mean of the samples
+    assert m["ledger"]["pool_in_use"] == {"ledger.db": {"used": 6.5, "max": 10}}
     assert m["worker"]["pool_in_use"] == {"worker.ledger_client": {"used": 3, "max": 10}}
     assert m["worker"]["queue_depth"] == {"jobs": 4, "jobs.head_attempts": 0, "jobs.dlq": 0}
     assert m["ledger"]["queue_depth"] == {"ledger.requests": 3}

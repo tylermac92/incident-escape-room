@@ -68,7 +68,19 @@ class Fault:
         return False
 
 
-FAULTS: dict[str, type[Fault]] = {}  # fault_script kind -> implementation (SCN-04 to SCN-06)
+class ExportLeak(Fault):
+    """pool_leak (§7.3): once receipt_export is on, some exports never return their connection."""
+
+    def onset(self, t, now_ms):
+        t.set_flag("receipt_export", True)  # the change that starts it
+        p = self.script["leak_probability"]
+        t.leak_leases(lambda call: call.kind == "receipt_export" and self.rng.random() < p)
+
+    def neutralized(self, t):
+        return not t.flag("receipt_export") and t.leaked_leases() == 0
+
+
+FAULTS: dict[str, type[Fault]] = {"export_leak": ExportLeak}  # fault_script kind -> implementation
 
 
 class Injector:

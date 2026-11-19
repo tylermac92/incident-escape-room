@@ -61,7 +61,7 @@ class Api:
         self.up = True  # False while Restarting (SCN-08)
         self.outbox: list[Call] = []
         self.responses: list[Response] = []  # drained by the metrics and bad-event phases
-        self.clients_peak = 0  # most client slots in use this step, for pool_in_use
+        self.pool_used = 0  # client slots in use at the end of this step, for pool_in_use
         self._in_flight: dict[Call, tuple[str, int]] = {}  # call -> (flow, request start)
         self._pending: list[tuple[int, int, str, int, int]] = []  # (ready, seq, flow, request start, attempt)
         self._seq = itertools.count()
@@ -108,7 +108,7 @@ class Api:
                 waiting.append((ready, flow, started, attempt))
         for ready, flow, started, attempt in waiting:
             heapq.heappush(self._pending, (ready, next(self._seq), flow, started, attempt))
-        self.clients_peak = len(self._in_flight)
+        self.pool_used = len(self._in_flight)
 
     def _schedule(self, ready, flow, started, attempt):
         heapq.heappush(self._pending, (ready, next(self._seq), flow, started, attempt))

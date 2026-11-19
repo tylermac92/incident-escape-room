@@ -37,7 +37,7 @@ class Worker:
         self.free_at = [0] * SLOTS
         self.outbox: list[Call] = []  # writes starting in the next step, for ledger
         self.attempts: list[Response] = []  # drained by the metrics and bad-event phases
-        self.clients_peak = 0  # slots with a write in flight this step, for pool_in_use
+        self.pool_used = 0  # slots with a write in flight at the end of this step, for pool_in_use
         self.down_until = 0  # consumer restart after a crash
         self.crash_looping = False  # set by a crash, cleared by the next completed job
 
@@ -79,7 +79,7 @@ class Worker:
                 start = max(slot.write_at, end)
                 slot.call = Call("worker", "write", slot.attempt, start, start + TIMEOUT_MS)
                 self.outbox.append(slot.call)
-        self.clients_peak = sum(1 for s in self.slots if s and s.call)
+        self.pool_used = sum(1 for s in self.slots if s and s.call)
 
     def _finish(self, i, t, reason):
         slot = self.slots[i]

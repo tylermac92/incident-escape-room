@@ -30,7 +30,7 @@ def test_lease_and_release(monkeypatch):
     calls = [call(at=5 * i, timeout=10**6) for i in range(POOL_SIZE + 2)]
     ledger.step(0, calls)
     assert ledger.in_use(99) == POOL_SIZE and len(ledger.queue) == 2  # 10 leased, 2 waiting
-    assert ledger.peak_in_use == POOL_SIZE
+    assert ledger.pool_used == 7.75  # time-weighted: leases start at 0, 5, ... 45 ms into the step
     done = run(ledger, [], 60)
     assert len(done) == len(calls) and all(c.reason is None for c in done)
     assert ledger.in_use(6000) == 0 and not ledger.queue

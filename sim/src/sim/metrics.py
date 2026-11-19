@@ -2,7 +2,7 @@
 
 Requests are recorded at completion, once per step. Each simulated second, tick() turns the
 trailing 10 s into latency p50/p95, error rate (by reason), and throughput (by breakdown), and
-samples queue depth and pool use (the maximum within the second) for each service.
+samples queue depth and pool use (the mean of the 10 end-of-step samples, D-21) for each service.
 """
 
 import math
@@ -15,6 +15,7 @@ from sim.worker import SLOTS
 
 WINDOW_S = 10
 LEDGER_LABELS = ("api.first", "api.retry", "worker.first", "worker.retry")
+REFUSED = ("queue_full", "pool_timeout")
 POOLS = {"api.ledger_client": CLIENT_POOL, "worker.ledger_client": SLOTS, "ledger.db": POOL_SIZE}
 
 
@@ -42,7 +43,7 @@ class Metrics:
     def __init__(self):
         self._window: deque = deque(maxlen=WINDOW_S)  # one bucket per second
         self._bucket = self._new_bucket()
-        self._peaks = dict.fromkeys(POOLS, 0)
+        self._pool_sums, self._samples = dict.fromkeys(POOLS, 0), 0
 
     @staticmethod
     def _new_bucket():
@@ -52,26 +53,30 @@ class Metrics:
         """Once per step, before the services' completion lists are drained."""
         b = self._bucket
         b["api"] += [(r.latency_ms, r.reason, r.flow) for r in api.responses]
-        b["ledger"] += [(c.done_ms - c.start_ms, c.reason, f"{c.caller}.{'first' if c.attempt == 1 else 'retry'}")
+        # Throughput is work ledger did: a request refused without a connection has no label.
+        b["ledger"] += [(c.done_ms - c.start_ms, c.reason,
+                         None if c.reason in REFUSED else f"{c.caller}.{'first' if c.attempt == 1 else 'retry'}")
                         for c in ledger.completed]
         b["worker"] += [(a.latency_ms, a.reason, "completed" if a.reason is None else "failed")
                         for a in worker.attempts]
-        for pool, used in (("api.ledger_client", api.clients_peak), ("worker.ledger_client", worker.clients_peak),
-                           ("ledger.db", ledger.peak_in_use)):
-            self._peaks[pool] = max(self._peaks[pool], used)
+        for pool, used in (("api.ledger_client", api.pool_used), ("worker.ledger_client", worker.pool_used),
+                           ("ledger.db", ledger.pool_used)):
+            self._pool_sums[pool] += used
+        self._samples += 1
 
     def tick(self, api, ledger, worker, jobs) -> dict:
         """The services' metrics for the second that just ended."""
         self._window.append(self._bucket)
         self._bucket = self._new_bucket()
-        peaks, self._peaks = self._peaks, dict.fromkeys(POOLS, 0)
+        used = {p: round(n / max(self._samples, 1), 1) for p, n in self._pool_sums.items()}
+        self._pool_sums, self._samples = dict.fromkeys(POOLS, 0), 0
         seconds = len(self._window)  # fewer than 10 at the start of a round
         merged = {svc: [s for b in self._window for s in b[svc]] for svc in ("api", "ledger", "worker")}
 
         sizes = {**POOLS, "ledger.db": ledger.pool_size}
 
         def pool(name):
-            return {name: {"used": peaks[name], "max": sizes[name]}}
+            return {name: {"used": used[name], "max": sizes[name]}}
 
         worker_m = summarize(merged["worker"], seconds, ("completed",))
         worker_m["throughput_rps"]["attempts"] = round(len(merged["worker"]) / seconds, 1)

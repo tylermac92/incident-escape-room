@@ -524,7 +524,7 @@
 
 **Acceptance criteria**
 - Requests are recorded at completion. Each simulated second, the trailing 10 s window produces `latency_p50_ms`, `latency_p95_ms`, `error_rate_pct` (by reason), and `throughput_rps` with these breakdowns: `api` by flow; `ledger` by caller × attempt; `worker` attempts vs completed.
-- `queue_depth` (for `jobs` and `ledger.requests`) and `pool_in_use` are sampled at the end of each second. Pool use is the maximum within the second, for `api.ledger_client` (50), `worker.ledger_client` (10), and `ledger.db` (10).
+- `queue_depth` (for `jobs` and `ledger.requests`) and `pool_in_use` are sampled at the end of each second. Pool use is the mean over the second (D-21), for `api.ledger_client` (50), `worker.ledger_client` (10), and `ledger.db` (10).
 - Service status (`Up`, `Restarting`, `Crash-looping`) is included per service.
 - Unit tests check p95 against a known latency distribution, and error-rate denominators.
 
@@ -941,7 +941,8 @@
 **Acceptance criteria**
 - **Rules:**
   - `api_error_rate_high`: `api` error rate ≥ 5% for 30 s.
-  - `api_latency_high`: `api` p95 ≥ 1000 ms for 30 s.
+  - `api_latency_high`: `api` p95 ≥ 600 ms for 30 s (D-22).
+- Rules that fire in the same second page in the order listed above (D-22).
   - `orders_backlog_high`: `jobs` depth ≥ 500 for 30 s.
 - The first rule to fire after onset is marked `is_page: true` and defines T0. Rules that fire later are secondary and don't change T0.
 - Each alert reports `FIRING` or `CLEARED` with `fired_at_ms` and `cleared_at_ms`.
@@ -2374,6 +2375,9 @@
 | D-18 Controller-owned feed RNG via SHA-256 | SIM-02, CTL-11, QA-17 |
 | D-19 Solo project and accepted validation gaps | REL-02 to REL-07, SEC-06, ENV-14, CTL-21 |
 | D-20 `ledger` pool wait counts from arrival | SIM-05, SCN-04, SCN-06 |
+| D-21 Pool use is a mean; `ledger` throughput counts served work | SIM-09, SCN-04, SCN-06 |
+| D-22 `api_latency_high` at 600 ms; same-second ties in table order | CTL-09, SCN-04, SCN-06, QA-02 |
+| D-23 `pool_leak` signature cells | SCN-04, QA-02 |
 
 ---
 
@@ -2403,6 +2407,9 @@ All 18 questions from the previous version are now **decided**, and v3 adds D-19
 | **D-18** | UQ-18: feed RNG ownership | The controller derives its own `feed` generator from the round seed with SHA-256 (`sha256(f"{seed}:feed")`). `sim` keeps only the `traffic`, `latency`, and `fault` streams. Python's built-in `hash()` is never used for seeding. | Deterministic, independent of the link, and no cross-process RNG sharing. | SIM-02, CTL-11, QA-17 |
 | **D-19** | New in v3: who builds and tests | **Solo project.** You are the only person who develops, tests, reviews, and approves.<br>**Consequences:**<br>• Every ticket has one owner (you).<br>• Human review steps become checklists, CI gates, and fresh-session AI reviews (D-03, D-16).<br>• Success criteria that depend on other players cannot be validated before release: **SC-1 for new players, SC-2c, and SC-4 with real players**. They are replaced by proxies and recorded as **accepted validation gaps** in the sign-off and release notes.<br>• If other people ever play the game, the original human playtest protocol (TDD §15.7, v1) can be run as optional validation after release. | It makes every release gate achievable alone, without implying that self-play or AI review proves how new players will do. | REL-02 to REL-07, SEC-06, ENV-14, CTL-21 |
 | **D-20** | New after v3: when the `ledger` pool wait starts | A request fails with `pool_timeout` if it has not got a `ledger.db` connection within 2000 ms of arriving; time in `ledger.requests` counts. | The TDD left the start of the clock open, and `pool_leak` (requests wait 2 s, then `pool_timeout`) needs it to start at arrival. A probe of `retry_storm` under this rule still shows a self-sustaining storm: queue at about 220–300, about 105 rps of wasted work, retry share about 80%. | SIM-05, SCN-04, SCN-06 |
+| **D-21** | New after v3: what `pool_in_use` and `ledger` throughput measure | `pool_in_use` is the mean over the second (time-weighted for `ledger.db`), not the maximum. `ledger` throughput counts requests that got a connection, including wasted work; `queue_full` and `pool_timeout` refusals count only toward error rate. | With the maximum, `ledger.db` sat near 7/10 at baseline and pinned at 10 a minute after a leak began, hiding `pool_leak`'s step climb; the TDD's baseline figures (about 4; normal 2–4) are means. Counting refusals would show `retry_storm` at 170–210 rps instead of about 100. | SIM-09, SCN-04, SCN-06 |
+| **D-22** | New after v3: `pool_leak` and `retry_storm` start both `api` alert conditions in the same second | `api_latency_high` fires at p95 ≥ 600 ms for 30 s. Rules that fire in the same second page in §9.6 table order. | An `api` request slower than the 1 s timeout is always a failed one, so at 1000 ms the latency and error conditions coincide in both scenarios. `pool_leak`'s p95 creeps through 600–950 ms first (at least 2 s ahead in every seed tested); `retry_storm` jumps from about 400 ms to 5 s, and the tie goes to `api_error_rate_high`. Still above the 500 ms health check; tunable in the pack. | CTL-09, SCN-04, SCN-06, QA-02 |
+| **D-23** | New after v3: `pool_leak` signature cells that the model cannot meet | At T0+60 s `ledger` throughput is ≤ 50 rps (below normal, reaching 0 only when all 10 connections have leaked); the retry share ≤ 35% cell is dropped. | Once requests time out, two of every three `ledger` requests are `backoff` retries (retry share 0.6–0.75). Throughput level (≤ 50 versus ≥ 80 rps) separates `pool_leak` from `retry_storm`. | SCN-04, QA-02 |
 
 ### Remaining open items
 

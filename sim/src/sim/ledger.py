@@ -31,7 +31,8 @@ class Ledger:
         self.busy_until = [0.0] * pool_size  # per ledger.db connection; math.inf for a leaked lease
         self.busy_ms = 0.0  # total connection hold time, for utilization
         self.completed: list = []  # calls finished this step (any reason), drained by metrics
-        self.peak_in_use = 0  # most connections leased at once this step, for pool_in_use
+        self.pool_used = 0.0  # mean connections leased during this step (time-weighted), for pool_in_use
+        self._leases: list = []  # [start, end] of leases that may overlap this or later steps
         self.hold_factor = 1.0  # multiplies hold times: a slowdown (test injection, retry_storm maintenance)
         self.leak = None  # fault hook (SCN-03): leak(call) -> True keeps the connection forever
         self._running: list = []  # (done ms, seq, call)
@@ -46,7 +47,6 @@ class Ledger:
 
     def step(self, now_ms: int, calls) -> None:
         end = now_ms + STEP_MS
-        self.peak_in_use = self.in_use(now_ms)
         arrivals = deque(sorted(calls, key=lambda c: c.start_ms))  # sorted() is stable: arrival order
         while True:
             head_t = start_t = expire_t = math.inf
@@ -73,6 +73,8 @@ class Ledger:
                     self.queue.append(call)
         while self._running and self._running[0][0] < end:
             self.completed.append(heapq.heappop(self._running)[2])
+        self.pool_used = sum(max(0.0, min(e, end) - max(s, now_ms)) for s, e in self._leases) / STEP_MS
+        self._leases = [lease for lease in self._leases if lease[1] > end]
 
     def _start(self, call, t):
         mean = self.hold_mean_ms[call.kind]
@@ -81,11 +83,11 @@ class Ledger:
         if self.leak and self.leak(call):
             # The query never returns and never gives its connection back; its caller times out.
             self.busy_until[i] = math.inf
-            self.peak_in_use = max(self.peak_in_use, self.in_use(t))
+            self._leases.append([t, math.inf])
             return
         self.busy_until[i] = t + hold
+        self._leases.append([t, t + hold])
         self.busy_ms += hold
-        self.peak_in_use = max(self.peak_in_use, self.in_use(t))
         call.done_ms = math.ceil(t + hold)
         call.reason = "timeout" if call.done_ms > call.deadline_ms else None
         self._seq += 1
