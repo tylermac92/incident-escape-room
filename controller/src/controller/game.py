@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from controller import actions as catalog
 from controller.alerts import Alerts
 from controller.errors import ApiError
 from controller.feed import Feed
@@ -146,6 +147,8 @@ class Game:
         self.impact: Impact | None = None  # the current round's impact accounting (CTL-10)
         self.content: dict | None = None  # feed templates and fictional lists, loaded at startup (CTL-11)
         self.feed: Feed | None = None
+        self.actions: list[dict] = []  # the current round's PlayerAction log (CTL-12, CTL-13)
+        self._requests: dict = {}  # client_request_id -> the original response or ApiError
 
     def save(self) -> None:
         if self.session is None:
@@ -255,6 +258,7 @@ class Game:
         self._tick, self._alerts, self.events = None, Alerts(config["alerts"]), []
         self._health, self.checks, self.impact = Health(), [], Impact()
         self.feed = Feed(rnd.seed, self.content, config["feed"])
+        self.actions, self._requests = [], {}
         self._log("state_change", **{"from": None, "to": rnd.state})
         self._task = asyncio.get_running_loop().create_task(self._run(rnd, retry))
         return rnd
@@ -375,6 +379,72 @@ class Game:
         if rnd.state != "ABORTED":
             await self._abort(rnd, "player_restart")
         return self._begin(rnd.scenario_id, rnd.attempt + 1)
+
+    # Actions (CTL-12, CTL-13)
+
+    async def act(self, round_id: str, request: dict) -> dict:
+        """POST /api/rounds/{id}/actions. A repeated client_request_id gets the original answer, uncharged."""
+        rnd = self.round(round_id)
+        prior = self._requests.get(request["client_request_id"]) if rnd is self.session.current_round else None
+        if isinstance(prior, ApiError):
+            raise prior
+        if prior is not None:
+            return prior
+        try:
+            response = await self._accept(rnd, request)
+        except ApiError as e:
+            if e.code != "sim_unavailable":  # the link may be back on a retry
+                self._requests[request["client_request_id"]] = e
+            raise
+        self._requests[request["client_request_id"]] = response
+        return response
+
+    async def _accept(self, rnd: Round, request: dict) -> dict:
+        kind, target, params = request["type"], request.get("target"), request.get("params") or {}
+        if (why := catalog.invalid(kind, target, params)) is not None:
+            raise ApiError(422, "invalid_request", why)
+        if rnd is not self.session.current_round or rnd.state != "ACTIVE":
+            raise ApiError(409, "invalid_state", f"Actions can only be run while the round is ACTIVE, not {rnd.state}.")
+        cost = self.link.config["action_costs"][kind]
+        if rnd.budget_remaining < cost:
+            raise ApiError(409, "insufficient_budget",
+                           f"{catalog.CATALOG[kind]['label']} costs {cost} points; you have {rnd.budget_remaining} left.",
+                           {"cost": cost, "budget_remaining": rnd.budget_remaining})
+        services, config = self._tick["services"], self._tick["config"]
+        if any(services[name]["status"] == "Restarting" for name in catalog.needs_up(kind, target)):
+            raise ApiError(409, "target_unavailable", "That service is restarting.")
+        if target == "jobs" and services["worker"]["queue_depth"]["jobs"] == 0:
+            raise ApiError(409, "target_unavailable", "jobs is empty.")
+        pending = [a for a in self.actions if a["status"] == "pending"]
+        if any(a["type"] == "restart_all" or a["target"] == target for a in pending) or (kind == "restart_all" and pending):
+            raise ApiError(409, "action_in_progress", "An action on that target is still in progress.")
+        current = {"set_feature_flag": lambda: config["flags"][target] == params["enabled"],
+                   "set_retry_policy": lambda: config["retry_policy"][target] == params["mode"]}.get(kind)
+        if current and current():
+            raise ApiError(409, "no_change", "That is already the current setting.")
+        t_ms = self._tick["sim_time_ms"]
+        action = {"id": f"a_{len(self.actions) + 1:04d}", "client_request_id": request["client_request_id"],
+                  "type": kind, "target": target, "params": params, "cost": cost, "status": "pending",
+                  "reject_reason": None, "submitted_at_ms": t_ms,
+                  "effective_at_ms": t_ms + catalog.CATALOG[kind]["delay_s"] * 1000}
+        try:
+            applied = await self.link.action({"action_id": action["id"], "type": kind, "target": target, "params": params})
+        except LinkDown:
+            raise ApiError(503, "sim_unavailable", "The link to the simulation is down.") from None
+        applied.add_done_callback(lambda future: self._applied(action, future))
+        rnd.budget_remaining -= cost  # charged on acceptance, before the delay (§10.3)
+        self.actions.append(action)
+        self._log("action", id=action["id"], type=kind, target=target, status="pending")
+        self.save()
+        return {"action": action, "budget_remaining": rnd.budget_remaining,
+                "sandbox_target": catalog.sandbox_target(target)}
+
+    def _applied(self, action: dict, future) -> None:
+        """evt.action_applied arrived (pending -> completed)."""
+        if future.cancelled() or action["status"] != "pending" or action not in self.actions:
+            return
+        action["status"], action["effective_at_ms"] = "completed", future.result()
+        self._log("action", id=action["id"], type=action["type"], target=action["target"], status="completed")
 
     def _log(self, kind: str, **payload) -> None:
         """Append to the current round's event log: seq strictly increasing, stamped with sim time."""

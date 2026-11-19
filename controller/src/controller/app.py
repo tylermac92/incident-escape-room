@@ -13,9 +13,10 @@ import isolation
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from starlette.exceptions import HTTPException
 
+from controller import actions
 from controller.errors import ApiError
 from controller.feed import load_content
 from controller.game import Game
@@ -144,3 +145,25 @@ def get_round(round_id: str) -> dict:
 async def lifecycle(round_id: str, verb: Literal["start", "pause", "resume", "restart"]) -> dict:
     async with game.lock:
         return game.view(await getattr(game, verb)(round_id))
+
+
+@app.get("/api/actions/catalog")
+def action_catalog() -> dict:
+    if link.config is None:
+        raise ApiError(503, "sim_unavailable", "The link to the simulation is down.")
+    return {"actions": actions.catalog(link.config["action_costs"])}
+
+
+class ActionRequest(BaseModel):
+    """Closed enumerations only: no hostname, URL, address, port, path or command can get through (SR-7)."""
+    model_config = ConfigDict(extra="forbid")
+    client_request_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    type: Literal[tuple(actions.CATALOG)]
+    target: Literal[tuple(actions.TARGETS)] | None = None
+    params: dict[Literal["enabled", "mode"], StrictBool | Literal["backoff", "aggressive"]] = {}
+
+
+@app.post("/api/rounds/{round_id}/actions", status_code=201)
+async def submit_action(round_id: str, body: ActionRequest) -> dict:
+    async with game.lock:
+        return await game.act(round_id, body.model_dump())
