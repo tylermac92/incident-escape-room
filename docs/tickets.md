@@ -942,8 +942,8 @@
 - **Rules:**
   - `api_error_rate_high`: `api` error rate ≥ 5% for 30 s.
   - `api_latency_high`: `api` p95 ≥ 1000 ms for 30 s.
-- Rules that fire in the same second page in the order listed above (D-22).
   - `orders_backlog_high`: `jobs` depth ≥ 500 for 30 s.
+- Rules that fire in the same second page in the order listed above (D-22).
 - The first rule to fire after onset is marked `is_page: true` and defines T0. Rules that fire later are secondary and don't change T0.
 - Each alert reports `FIRING` or `CLEARED` with `fired_at_ms` and `cleared_at_ms`.
 - Alert text names the symptom only.

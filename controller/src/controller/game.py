@@ -310,7 +310,8 @@ class Game:
         rnd.t_onset_ms = fault["onset_ms"]
         since_t0 = None if rnd.t0_ms is None else (t_ms - rnd.t0_ms) // 1000 + 1
         self.checks = self._health.evaluate(event["services"], since_t0)
-        self._alerts.evaluate(event["services"], event["sim_time_ms"], armed=fault["active"])
+        for alert in self._alerts.evaluate(event["services"], t_ms, armed=fault["active"]):
+            self._log("alert", **{k: alert[k] for k in ("rule_id", "state", "is_page")})
         if rnd.state == "ACTIVE":
             self._update(rnd, t_ms)
         return None

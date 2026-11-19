@@ -37,7 +37,8 @@ def test_stops_in_the_second_the_page_fires(tmp_path):
     view = game.view(rnd)
     assert view["timer_remaining_s"] == 720 and view["t_ms"] == 730_000  # the timer starts at T0
     assert view["alerts"] == [{"rule_id": "api_error_rate_high", "state": "FIRING", "fired_at_ms": 730_000,
-                               "cleared_at_ms": None, "is_page": True}]
+                               "cleared_at_ms": None, "is_page": True,
+                               "text": "api error rate at or above 5% for 30 s"}]
     assert "hidden" not in str(view) and not {"scenario_id", "t_onset_ms", "seed"} & set(view)
 
 
@@ -113,4 +114,5 @@ def test_round_event_log(tmp_path):
     game = run(FakeSim(after_onset(error_pct=10)), tmp_path)
     assert [(e["seq"], e["sim_time_ms"], e["kind"], e["payload"]) for e in game.events] == [
         (1, 0, "state_change", {"from": None, "to": "PREPARING"}),
-        (2, 730_000, "state_change", {"from": "PREPARING", "to": "BRIEFING"})]
+        (2, 730_000, "alert", {"rule_id": "api_error_rate_high", "state": "FIRING", "is_page": True}),
+        (3, 730_000, "state_change", {"from": "PREPARING", "to": "BRIEFING"})]
