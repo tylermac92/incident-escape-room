@@ -5,7 +5,7 @@ to `jobs`, and calls `ledger` for synchronous requests through a 50-slot client 
 per-attempt timeout and the current retry policy.
 
 Interface with `ledger` (SIM-05): calls for this step are left in `outbox`; `ledger` takes
-them and, when it finishes one, sets `done_ms` and `reason` (None means success). A call the
+them and sets `done_ms` (possibly in the future) and `reason` (None means success). A call the
 caller has given up on is marked `abandoned`; `ledger` still processes it (wasted work).
 """
 
@@ -65,7 +65,8 @@ class Api:
         # shortcut: ledger runs after api in a step, so a timeout or ledger answer is noticed at the
         # next step boundary and a retry starts up to 100 ms late; the recorded times stay exact.
         for call, (flow, started) in list(self._in_flight.items()):
-            if call.done_ms is not None and call.done_ms <= call.deadline_ms:
+            # ledger sets done_ms when it starts a call, so an answer counts only once it is in the past.
+            if call.done_ms is not None and call.done_ms <= min(call.deadline_ms, now_ms):
                 self._finish(call, flow, started, call.done_ms, call.reason)
             elif now_ms >= call.deadline_ms:
                 call.abandoned = True

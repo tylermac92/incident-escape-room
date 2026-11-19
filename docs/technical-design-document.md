@@ -541,8 +541,8 @@ All three scenarios use the same world, catalog, and dashboard. Only the hidden 
 | Alert that pages | `api_latency_high` (p95 ≥ 1000 ms for 30 s) | `orders_backlog_high` (jobs ≥ 500 for 30 s) | `api_error_rate_high` (≥ 5% for 30 s) |
 | `ledger.db` pool in use | **Climbs in steps from about 4 to 10/10 over about 4 min, and doesn't drop when traffic dips** | Normal (2–4) | Pinned at 10/10, but connections are working, not stuck |
 | `ledger` throughput, retry share | Falls toward 0; retry share ≤ 35% | Lower (fewer writes); retry share about 0% | **At capacity (about 100 rps), far above `api` input (about 42); retry share > 60%** |
-| `ledger.requests` queue depth | Rises only after the pool is exhausted | about 0 | **Full at 300** |
-| `ledger` errors (main reason) | `pool_timeout` | none | `timeout` and `queue_full` |
+| `ledger.requests` queue depth | Rises only after the pool is exhausted | about 0 | **Near the cap of 300** |
+| `ledger` errors (main reason) | `pool_timeout` | none | `timeout`, with `pool_timeout` and `queue_full` |
 | `api` errors and p95 | p95 creeps up, then 1 s timeouts; errors follow | Normal | Errors jump quickly; p95 about 1 s or more |
 | `worker` status and errors | Up; errors are `downstream_timeout` | **Crash-looping; errors are `crash`** | Up; errors are `downstream_timeout` |
 | `jobs` depth / head message delivery attempts | Grows / stays low (1–2) | **Grows at the full 10/s / climbs by 1 every 5 s** | Grows / stays low |
@@ -631,7 +631,7 @@ A test pins each bold cell as part of that scenario's signature (T-DIAG). In eve
 
 - **Simulated mechanism.** A 20 s `ledger` index maintenance window multiplies hold times by 8, which cuts capacity to about 12 rps. `ledger.requests` fills up, so `api` calls exceed their 1 s timeout. The `api` caller is configured `aggressive`, so each timeout triggers immediate retries. Offered load rises to about 170–210 rps against a capacity of about 100.
 
-  Once the queue holds 300 requests, waiting time (about 3 s) exceeds the client timeout. `ledger` then spends all its capacity on requests whose callers have already given up. The overload keeps feeding itself after maintenance ends; this is a *metastable* failure.
+  Once the queue holds a few hundred requests, waiting time (2 s or more, up to the pool wait limit; D-20) far exceeds the 1 s client timeout. `ledger` then spends all its capacity on requests whose callers have already given up. The overload keeps feeding itself after maintenance ends; this is a *metastable* failure.
 - **Initial conditions.** Baseline world, except that the `api` retry policy is `aggressive`. Onset at about T−0:45.
 - **Progression**
 
@@ -644,7 +644,7 @@ A test pins each bold cell as part of that scenario's signature (T-DIAG). In eve
   | T0 onward | With no fix, reads fail at nearly 100% and orders back up. |
 
 - **Observable symptoms by service**
-  - `ledger`: throughput at about 100 rps (more than twice the customer request rate), retry share above 60%, `ledger.requests` pinned at 300, `timeout` and `queue_full` errors, pool pinned at 10/10.
+  - `ledger`: throughput at about 100 rps (more than twice the customer request rate), retry share above 60%, `ledger.requests` near its cap of 300, `timeout` errors with `pool_timeout` and `queue_full`, pool pinned at 10/10.
   - `api`: errors at 90% or more, and its client pool to `ledger` is high.
   - `worker`: `downstream_timeout` errors.
   - `jobs`: growing, with head delivery attempts low.
@@ -691,7 +691,7 @@ A test pins each bold cell as part of that scenario's signature (T-DIAG). In eve
 - **`api`.** About 15 ms of its own time. For a synchronous request it calls `ledger` through `api.ledger_client`, subject to timeout and retry policy, and reports end-to-end latency. For an order it answers 202 immediately after enqueueing. When `api` is down (restarting), every customer request fails immediately.
 - **`ledger`**
   - An arriving request joins `ledger.requests` (FIFO, cap 300). If the queue is full, it is rejected with `queue_full`.
-  - A request at the head takes a connection from `ledger.db`. If none is free within 2000 ms, it fails with `pool_timeout`.
+  - A request at the head takes a connection from `ledger.db`. If it has not got one within 2000 ms of arriving (time in the queue counts; D-20), it fails with `pool_timeout`.
   - Hold times are lognormal with σ = 0.4. Means: reads 80 ms, writes 120 ms, receipt exports 300 ms.
   - Capacity is about 100 rps, and baseline utilization about 42%.
   - A request whose caller has already timed out is still processed; that wasted work drives the retry storm. Its completion counts toward `ledger` throughput but not toward any customer success.
@@ -1337,3 +1337,4 @@ These decisions resolve the open questions in §17 and the gaps found during tic
 | D-17 | Packet capture runs on an ephemeral Linux CI runner, outside the Compose project. On Colima it runs inside the VM. | §15.6 |
 | D-18 | The controller derives its own `feed` RNG from the round seed with SHA-256. `sim` keeps the `traffic`, `latency`, and `fault` streams. | §8.1, §9.8 |
 | D-19 | **Solo project.** One person develops, tests, reviews, and approves. SC-1 (new players), SC-2c, and SC-4 (real players) become proxy checks plus **accepted validation gaps**. Week estimates are removed from §16.1. | Header, §2.6, §3.1, §15.7, §16 |
+| D-20 | **`ledger` pool wait counts from arrival.** A `ledger` request that has not got a `ledger.db` connection within 2000 ms of *arriving* fails with `pool_timeout`; time in `ledger.requests` counts. This keeps `pool_leak`'s signature (requests wait 2 s, then `pool_timeout`). In `retry_storm` the queue then runs near its cap rather than pinned at 300, and `pool_timeout` joins `timeout` and `queue_full`. | §7.2, §7.5, §8.3 |
