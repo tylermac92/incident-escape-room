@@ -80,7 +80,17 @@ class ExportLeak(Fault):
         return not t.flag("receipt_export") and t.leaked_leases() == 0
 
 
-FAULTS: dict[str, type[Fault]] = {"export_leak": ExportLeak}  # fault_script kind -> implementation
+class PoisonBatch(Fault):
+    """poison_message (§7.4): a partner-import batch whose first order is malformed."""
+
+    def onset(self, t, now_ms):
+        self.poison = t.add_batch(self.script["batch_size"], now_ms)
+
+    def neutralized(self, t):
+        return not t.in_jobs(self.poison)
+
+
+FAULTS: dict[str, type[Fault]] = {"export_leak": ExportLeak, "poison_batch": PoisonBatch}  # kind -> implementation
 
 
 class Injector:
